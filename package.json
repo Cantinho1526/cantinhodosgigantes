@@ -1,0 +1,15 @@
+{
+  "name": "cantinho-dos-gigantes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de pedidos do Cantinho dos Gigantes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^5.1.0",
+    "qrcode": "^1.5.4"
+  }
+}
