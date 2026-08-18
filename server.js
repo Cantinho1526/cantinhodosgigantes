@@ -99,6 +99,9 @@ async function init(){
       created_at timestamptz default now()
     );
 
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_quantity int NOT NULL DEFAULT 0;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_control boolean NOT NULL DEFAULT false;
+
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS account_id int REFERENCES table_accounts(id);
 
     CREATE TABLE IF NOT EXISTS order_items(
@@ -219,11 +222,14 @@ app.post("/api/orders",async(req,res)=>{
     for(const item of items){
       const quantity=Math.max(1,Math.floor(Number(item.quantity)));
       const r=await c.query(
-        "select id,name,price from products where id=$1 and active=true",
+        "select id,name,price,stock_quantity,stock_control from products where id=$1 and active=true for update",
         [Number(item.product_id)]
       );
       if(!r.rowCount)throw Error("Produto inválido");
       const p=r.rows[0], price=Number(p.price);
+      if(p.stock_control && Number(p.stock_quantity)<quantity){
+        throw Error(`Estoque insuficiente para ${p.name}. Disponível: ${p.stock_quantity}`);
+      }
       total+=price*quantity;
       normalized.push({p,quantity,price});
     }
@@ -241,6 +247,12 @@ app.post("/api/orders",async(req,res)=>{
          values($1,$2,$3,$4,$5)`,
         [order.id,x.p.id,x.p.name,x.quantity,x.price]
       );
+      if(x.p.stock_control){
+        await c.query(
+          "update products set stock_quantity=stock_quantity-$1 where id=$2",
+          [x.quantity,x.p.id]
+        );
+      }
     }
 
     await c.query("commit");
@@ -248,7 +260,7 @@ app.post("/api/orders",async(req,res)=>{
   }catch(e){
     await c.query("rollback");
     console.error(e);
-    res.status(400).json({error:"Não foi possível criar o pedido."});
+    res.status(400).json({error:e.message||"Não foi possível criar o pedido."});
   }finally{
     c.release();
   }
@@ -262,6 +274,24 @@ app.get("/api/admin/products",requireAdmin,async(req,res)=>{
       where p.active=true order by c.id,p.id
     `)).rows);
   }catch(e){res.status(500).json({error:"Erro ao carregar produtos."})}
+});
+
+app.get("/api/stock",requireAdmin,async(req,res)=>{
+  try{
+    const rows=(await pool.query(`select p.id,p.name,p.emoji,p.stock_quantity,p.stock_control,c.name category
+      from products p join categories c on c.id=p.category_id where p.active=true order by c.id,p.name`)).rows;
+    res.json(rows);
+  }catch(e){res.status(500).json({error:"Erro ao carregar estoque."})}
+});
+
+app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
+  const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
+  const control=Boolean(req.body.stock_control);
+  try{
+    const r=await pool.query("update products set stock_quantity=$1,stock_control=$2 where id=$3 and active=true returning id,name,stock_quantity,stock_control",[quantity,control,Number(req.params.id)]);
+    if(!r.rowCount)return res.status(404).json({error:"Produto não encontrado."});
+    res.json(r.rows[0]);
+  }catch(e){res.status(500).json({error:"Erro ao atualizar estoque."})}
 });
 
 app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
@@ -289,10 +319,28 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   if(!allowed.includes(req.body.status)){
     return res.status(400).json({error:"Status inválido."});
   }
+  const c=await pool.connect();
   try{
-    await pool.query("update orders set status=$1 where id=$2",[req.body.status,Number(req.params.id)]);
+    await c.query("begin");
+    const id=Number(req.params.id);
+    const current=(await c.query("select status from orders where id=$1 for update",[id])).rows[0];
+    if(!current){await c.query("rollback");return res.status(404).json({error:"Pedido não encontrado."});}
+    const next=req.body.status;
+    if(current.status!=="Cancelado" && next==="Cancelado"){
+      await c.query(`update products p set stock_quantity=p.stock_quantity+oi.quantity
+        from order_items oi where oi.order_id=$1 and oi.product_id=p.id and p.stock_control=true`,[id]);
+    }else if(current.status==="Cancelado" && next!=="Cancelado"){
+      const items=(await c.query(`select p.id,p.name,p.stock_quantity,oi.quantity from order_items oi
+        join products p on p.id=oi.product_id where oi.order_id=$1 and p.stock_control=true for update`,[id])).rows;
+      for(const x of items){if(Number(x.stock_quantity)<Number(x.quantity))throw Error(`Estoque insuficiente para ${x.name}.`);}
+      await c.query(`update products p set stock_quantity=p.stock_quantity-oi.quantity
+        from order_items oi where oi.order_id=$1 and oi.product_id=p.id and p.stock_control=true`,[id]);
+    }
+    await c.query("update orders set status=$1 where id=$2",[next,id]);
+    await c.query("commit");
     res.json({ok:true});
-  }catch(e){res.status(500).json({error:"Erro ao atualizar status."})}
+  }catch(e){await c.query("rollback");res.status(500).json({error:e.message||"Erro ao atualizar status."})}
+  finally{c.release()}
 });
 
 app.get("/api/accounts",requireAdmin,async(req,res)=>{
@@ -404,10 +452,10 @@ app.post("/api/products",requireAdmin,async(req,res)=>{
   }
   try{
     const r=await pool.query(
-      `insert into products(name,description,price,category_id,emoji,image,active)
-       values($1,$2,$3,$4,$5,$6,true) returning id`,
+      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control)
+       values($1,$2,$3,$4,$5,$6,true,$7,$8) returning id`,
       [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||"")]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control)]
     );
     res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:"Erro ao cadastrar produto."})}
@@ -417,9 +465,9 @@ app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   const x=req.body;
   try{
     await pool.query(
-      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6 where id=$7`,
+      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8 where id=$9`,
       [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||""),Number(req.params.id)]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Number(req.params.id)]
     );
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
