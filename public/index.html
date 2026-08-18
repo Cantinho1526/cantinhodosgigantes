@@ -594,9 +594,10 @@ async function stock(lowOnly){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><div><h2>📦 Estoque</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição</div></div></div>'+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0" class="noPrint">'+
           '<button class="'+(stockLowOnly?'btn':'secondary')+'" onclick="stock(true)">⚠️ Somente estoque baixo ('+low.length+')</button>'+
           '<button class="'+(!stockLowOnly?'btn':'secondary')+'" onclick="stock(false)">📦 Mostrar todos</button>'+
+          '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+
         '</div>'+
         '<div class="notice">'+(stockLowOnly?'Mostrando somente produtos controlados que atingiram o limite de estoque baixo.':'Ative o controle nos produtos desejados e informe a quantidade atual. A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque.')+'</div>'+
         (visible.length?visible.map(p=>{
@@ -614,6 +615,41 @@ async function stock(lowOnly){
     requestAnimationFrame(()=>{
       const el=$("adminContent");
       if(el) el.scrollIntoView({behavior:"auto",block:"start"});
+    });
+  }catch(e){alert(e.message)}
+}
+
+
+async function stockReplenishmentList(){
+  try{
+    const a=await api("/api/stock");
+    const low=a.filter(p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5));
+    const now=new Date().toLocaleString("pt-BR");
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Lista de reposição • '+E(now)+'</p></div>'+
+        '<div class="row noPrint"><div><h2>🛒 Lista de reposição</h2><div style="color:#aaa">'+low.length+' produto(s) precisando de reposição</div></div>'+
+          '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
+        '</div>'+
+        '<div class="reportSection">'+
+          (!low.length
+            ? '<div class="notice">Nenhum produto precisa de reposição no momento. ✅</div>'
+            : '<div style="overflow:auto"><table class="reportTable" style="width:100%;border-collapse:collapse;min-width:560px">'+
+                '<thead><tr><th>Produto</th><th>Categoria</th><th style="text-align:right">Estoque atual</th><th style="text-align:right">Limite de alerta</th></tr></thead><tbody>'+
+                low.map(p=>
+                  '<tr>'+
+                    '<td><b>'+E(p.emoji||"📦")+' '+E(p.name)+'</b></td>'+
+                    '<td>'+E(p.category||"—")+'</td>'+
+                    '<td style="text-align:right"><b>'+Number(p.stock_quantity||0)+' un.</b></td>'+
+                    '<td style="text-align:right">'+Number(p.stock_low_threshold ?? 5)+' un.</td>'+
+                  '</tr>'
+                ).join("")+
+                '</tbody></table></div>')+
+        '</div>'+
+      '</div>';
+    requestAnimationFrame(()=>{
+      const el=$("adminContent");
+      if(el)el.scrollIntoView({behavior:"auto",block:"start"});
     });
   }catch(e){alert(e.message)}
 }
