@@ -291,6 +291,7 @@ async function dashboard(){
         '<button onclick="cash()">💰 Caixa</button>'+
         '<button onclick="salesHistory()">📊 Histórico</button>'+
         '<button onclick="dailyReport()">📅 Relatório</button>'+
+        '<button onclick="periodReport()">📆 Período</button>'+
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
@@ -603,6 +604,85 @@ async function salesHistory(){
 function todayLocal(){
   const d=new Date();
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+
+
+async function periodReport(start,end){
+  try{
+    const now=todayLocal();
+    const first=start||now.slice(0,8)+"01";
+    const last=end||now;
+
+    const r=await api("/api/reports/period?start="+encodeURIComponent(first)+"&end="+encodeURIComponent(last));
+    window.__periodReport=r;
+
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><h2>📆 Relatório por período</h2><button class="secondary" onclick="exportPeriodCSV()">Exportar CSV</button></div>'+
+        '<div class="reportFilters">'+
+          '<div class="field"><label>Data inicial</label><input id="periodStart" type="date" value="'+E(first)+'"></div>'+
+          '<div class="field"><label>Data final</label><input id="periodEnd" type="date" value="'+E(last)+'"></div>'+
+          '<button class="btn" onclick="periodReport($(\'periodStart\').value,$(\'periodEnd\').value)">Buscar</button>'+
+        '</div>'+
+        '<div class="reportSummary">'+
+          '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
+          '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
+          '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
+          '<div class="reportBox"><small>Ticket médio</small><strong>'+R(r.summary.ticket_medio)+'</strong></div>'+
+          '<div class="reportBox"><small>Itens vendidos</small><strong>'+r.summary.itens+'</strong></div>'+
+        '</div>'+
+        '<div class="reportSection"><h3>Resumo por dia</h3>'+
+          (r.days.length?
+            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Data</th><th>Contas</th><th>Total</th></tr></thead><tbody>'+
+            r.days.map(d=>'<tr><td>'+new Date(d.day+"T12:00:00").toLocaleDateString("pt-BR")+'</td><td>'+d.contas+'</td><td>'+R(d.total)+'</td></tr>').join("")+
+            '</tbody></table></div>'
+          :'<div class="empty">Nenhuma venda no período.</div>')+
+        '</div>'+
+        '<div class="reportSection"><h3>Produtos vendidos</h3>'+
+          (r.products.length?
+            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Total</th></tr></thead><tbody>'+
+            r.products.map(p=>'<tr><td>'+E(p.name)+'</td><td>'+p.quantity+'</td><td>'+R(p.total)+'</td></tr>').join("")+
+            '</tbody></table></div>'
+          :'<div class="empty">Nenhum produto vendido no período.</div>')+
+        '</div>'+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+function exportPeriodCSV(){
+  const r=window.__periodReport;
+  if(!r){alert("Abra um relatório por período primeiro.");return}
+
+  const rows=[
+    ["Relatório por período",r.start,r.end],[],
+    ["Resumo"],
+    ["Total",r.summary.total],
+    ["PIX",r.summary.pix],
+    ["Dinheiro",r.summary.dinheiro],
+    ["Cartão",r.summary.cartao],
+    ["Contas",r.summary.contas],
+    ["Ticket médio",r.summary.ticket_medio],
+    ["Itens vendidos",r.summary.itens],[],
+    ["Resumo por dia"],
+    ["Data","Contas","Total"],
+    ...r.days.map(d=>[d.day,d.contas,d.total]),[],
+    ["Produtos vendidos"],
+    ["Produto","Quantidade","Total"],
+    ...r.products.map(p=>[p.name,p.quantity,p.total])
+  ];
+
+  const csv=rows.map(row=>row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(";")).join("\n");
+  const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="relatorio-periodo-"+r.start+"-a-"+r.end+".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function dailyReport(date){
