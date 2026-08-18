@@ -577,17 +577,17 @@ async function stock(){
   try{
     const a=await api("/api/stock");
     const controlled=a.filter(p=>p.stock_control);
-    const low=controlled.filter(p=>Number(p.stock_quantity)<=5).length;
+    const low=controlled.filter(p=>Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5)).length;
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><div><h2>📦 Estoque</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low+' com estoque baixo</div></div></div>'+
         '<div class="notice">Ative o controle nos produtos desejados e informe a quantidade atual. A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque.</div>'+
         a.map(p=>{
-          const q=Number(p.stock_quantity||0), warn=p.stock_control&&q<=5;
+          const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=p.stock_control&&q<=threshold;
           return '<div class="productRow">'+
             '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+'</div></div>'+
             '<div class="productActions" style="align-items:center">'+
-              '<span style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.':'Sem controle')+'</span>'+
+              '<span style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</span>'+
               '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button>'+
             '</div></div>';
         }).join("")+
@@ -630,6 +630,8 @@ async function stockForm(id){
     modal('<h2>📦 Estoque — '+E(p.name)+'</h2>'+
       '<div class="field"><label><input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '<div class="field"><label>⚠️ Avisar estoque baixo quando restarem</label><input id="stl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
+      '<div class="notice">Este limite vale somente para este produto. Ex.: 5 significa que o aviso aparece com 5 unidades ou menos.</div>'+
       '<div class="notice">Use <b>Salvar estoque</b> para correções manuais. Para reposição de mercadoria, prefira a entrada abaixo.</div>'+
       '<hr style="border:0;border-top:1px solid #333;margin:18px 0">'+
       '<h3>➕ Entrada de estoque</h3>'+
@@ -644,7 +646,7 @@ async function stockForm(id){
 
 async function saveStock(id){
   try{
-    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0))})});
+    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0)),stock_low_threshold:Math.max(0,Math.floor(Number($("stl").value)||0))})});
     closeModal();stock();
   }catch(e){alert(e.message)}
 }
