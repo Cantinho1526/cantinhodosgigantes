@@ -74,10 +74,14 @@ textarea{min-height:88px}
 .billOrder:last-child{border-bottom:0}
 .paymentGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
 .paymentGrid button{background:#232323;color:#fff;border:1px solid #3b3b3b}
-.paymentGrid button.selected{background:#ffbf00;color:#111;border-color:#ffbf00;font-weight:900}
+ .paymentGrid button.selected{background:#ffbf00;color:#111;border-color:#ffbf00;font-weight:900}
+.cashSummary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+.cashBox{background:#101010;border:1px solid #403200;border-radius:12px;padding:13px}.cashBox small{color:#aaa}.cashBox strong{display:block;color:#ffd34d;font-size:20px;margin-top:5px}
+.saleRow{display:grid;grid-template-columns:1fr auto;gap:10px;padding:12px 0;border-bottom:1px solid #2a2a2a}.saleRow:last-child{border-bottom:0}
 @media(max-width:760px){
   .accountGrid{grid-template-columns:1fr}
   .paymentGrid{grid-template-columns:1fr}
+  .cashSummary{grid-template-columns:1fr 1fr}
 }
 
 </style>
@@ -255,6 +259,8 @@ async function dashboard(){
       '</div>'+
       '<div class="tabs">'+
         '<button onclick="accounts()">🪑 Comandas</button>'+
+        '<button onclick="cash()">💰 Caixa</button>'+
+        '<button onclick="salesHistory()">📊 Histórico</button>'+
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
@@ -492,6 +498,74 @@ async function saveSettings(){
     });
     closeModal();
     dashboard();
+  }catch(e){alert(e.message)}
+}
+
+
+async function cash(){
+  try{
+    const d=await api("/api/cash");
+    const h=await api("/api/cash/history");
+    if(!d.session){
+      $("adminContent").innerHTML=
+        '<div class="panel"><h2>💰 Caixa</h2><div class="notice">Nenhum caixa está aberto.</div>'+ 
+        '<div class="field"><label>Valor inicial / troco</label><input id="cashOpening" type="number" step="0.01" min="0" value="0"></div>'+ 
+        '<button class="btn" onclick="openCash()">Abrir caixa</button></div>'+cashHistoryHtml(h);
+      return;
+    }
+    const x=d.summary;
+    $("adminContent").innerHTML=
+      '<div class="panel"><div class="row"><h2>💰 Caixa aberto</h2><span class="badgeOpen">ABERTO</span></div>'+ 
+      '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Fundo inicial: <b>'+R(d.session.opening_amount)+'</b></div>'+ 
+      '<div class="cashSummary">'+
+        '<div class="cashBox"><small>PIX</small><strong>'+R(x.pix)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Dinheiro</small><strong>'+R(x.dinheiro)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Cartão</small><strong>'+R(x.cartao)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Total vendido</small><strong>'+R(x.sales_total)+'</strong></div>'+ 
+      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+ 
+      '<button class="btn" onclick="closeCashForm('+d.session.id+','+(Number(d.session.opening_amount)+Number(x.dinheiro))+')">Fechar caixa</button></div>'+cashHistoryHtml(h);
+  }catch(e){alert(e.message)}
+}
+
+function cashHistoryHtml(h){
+  const closed=h.filter(x=>x.status==="Fechado");
+  return '<div class="panel"><h2>Últimos fechamentos</h2>'+(!closed.length?'<div class="empty">Nenhum fechamento registrado.</div>':closed.slice(0,10).map(x=>
+    '<div class="saleRow"><div><b>Caixa #'+x.id+'</b><div style="color:#aaa">'+new Date(x.opened_at).toLocaleString("pt-BR")+' → '+new Date(x.closed_at).toLocaleString("pt-BR")+'</div></div>'+ 
+    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Esperado em dinheiro: '+R(x.expected_amount)+'</div></div></div>'
+  ).join(""))+'</div>';
+}
+
+async function openCash(){
+  try{
+    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:Number($("cashOpening").value||0)})});
+    cash();
+  }catch(e){alert(e.message)}
+}
+
+function closeCashForm(id,expected){
+  modal('<h2>Fechar caixa</h2><div class="notice">Dinheiro esperado na gaveta: <b>'+R(expected)+'</b></div>'+ 
+    '<div class="field"><label>Valor contado na gaveta</label><input id="cashClosing" type="number" step="0.01" min="0"></div>'+ 
+    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNotes"></textarea></div>'+ 
+    '<button class="btn" onclick="closeCash('+id+')">Confirmar fechamento</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
+}
+
+async function closeCash(id){
+  const v=Number($("cashClosing").value);
+  if(!Number.isFinite(v)||v<0){alert("Informe o valor contado no caixa.");return}
+  if(!confirm("Confirmar fechamento do caixa?"))return;
+  try{
+    const r=await api("/api/cash/"+id+"/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({closing_amount:v,notes:$("cashNotes").value})});
+    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Valor contado: <b>'+R(r.session.closing_amount)+'</b></p><p>Diferença: <b>'+R(r.difference)+'</b></p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
+  }catch(e){alert(e.message)}
+}
+
+async function salesHistory(){
+  try{
+    const a=await api("/api/sales/history");
+    const totals=a.reduce((z,x)=>{const v=Number(x.total);z.total+=v;z[x.payment_method]=(z[x.payment_method]||0)+v;return z},{total:0,PIX:0,Dinheiro:0,"Cartão":0});
+    $("adminContent").innerHTML='<div class="panel"><h2>📊 Histórico de vendas</h2>'+ 
+      '<div class="cashSummary"><div class="cashBox"><small>Total</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div><div class="cashBox"><small>Dinheiro</small><strong>'+R(totals.Dinheiro)+'</strong></div><div class="cashBox"><small>Cartão</small><strong>'+R(totals["Cartão"])+'</strong></div></div>'+ 
+      (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>Mesa '+x.table_number+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
   }catch(e){alert(e.message)}
 }
 
