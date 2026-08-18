@@ -1,21 +1,406 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cantinho dos Gigantes</title><style>body{margin:0;background:#f4f4f2;font-family:Arial;color:#151515}.top{background:#111;color:#fff;padding:14px;display:flex;justify-content:space-between;position:sticky;top:0}.top button,.btn{border:0;border-radius:9px;padding:10px 14px;cursor:pointer}.active,.btn{background:#ffb400}.wrap{max-width:1100px;margin:auto;padding:18px}.hero{background:#202326;color:#fff;border-radius:18px;padding:28px}.tabs{display:flex;gap:8px;overflow:auto;margin:18px 0}.tabs button{padding:10px;border:1px solid #ddd;border-radius:9px;background:#fff}.sel{background:#111!important;color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.card,.panel,.order{background:#fff;border:1px solid #ddd;border-radius:14px;padding:15px}.pic{height:120px;background:#17191b;color:#fff;display:grid;place-items:center;font-size:60px;margin:-15px -15px 15px}.pic img{width:100%;height:100%;object-fit:cover}.row{display:flex;justify-content:space-between;align-items:center;gap:8px}.price{font-weight:bold;font-size:19px}.cart{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:12px 16px;border-radius:12px}.hidden{display:none!important}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat{background:#111;color:#fff;padding:15px;border-radius:10px}.stat b{display:block;font-size:23px}.orders{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center}.box{background:#fff;padding:20px;border-radius:14px;width:min(500px,92%)}input,textarea,select{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}@media(max-width:650px){.stats{grid-template-columns:1fr 1fr}}</style></head><body>
-<header class="top"><b>🍔 CANTINHO <span style="color:#ffb400">DOS GIGANTES</span></b><div><button class="active" onclick="client()">Cliente</button><button onclick="admin()">Admin</button></div></header><main class="wrap"><section id="app"></section></main><div id="cart" class="cart hidden"></div><div id="modal" class="modal hidden"></div>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cantinho dos Gigantes</title>
+<style>
+:root{--gold:#d9a300;--gold2:#ffbf00;--black:#080808;--dark:#121212;--panel:#171717;--line:#2b2b2b;--text:#f5f5f5;--muted:#b7b7b7;--red:#b91c1c;--green:#15803d}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0b0b;color:var(--text);font-family:Arial,Helvetica,sans-serif}
+button,input,textarea,select{font:inherit}
+button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
+.top{position:sticky;top:0;z-index:30;background:#050505;border-bottom:1px solid #2c2300;padding:13px 18px;display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:900;letter-spacing:.4px}.brand span{color:var(--gold2)}
+.topActions{display:flex;gap:8px}
+.top button{background:#222;color:#fff}.top button.active{background:var(--gold2);color:#111;font-weight:900}
+.wrap{max-width:1180px;margin:auto;padding:20px}
+.hero{background:radial-gradient(circle at 15% 10%,#2e2400 0,#151515 34%,#080808 75%);border:1px solid #604b00;border-radius:22px;padding:32px;box-shadow:0 10px 35px #0008}
+.hero h1{font-size:38px;margin:0 0 8px;color:#ffd34d}
+.hero p{color:#ddd;margin-bottom:6px}
+.tableTag{display:inline-block;background:#2a2100;color:#ffd34d;border:1px solid #765b00;padding:8px 12px;border-radius:999px;margin-top:8px;font-weight:800}
+.tabs{display:flex;gap:8px;overflow:auto;margin:18px 0;padding-bottom:4px}
+.tabs button{background:#181818;color:#ddd;border:1px solid #333;white-space:nowrap}
+.tabs button.sel{background:var(--gold2);color:#111;border-color:var(--gold2);font-weight:900}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:15px}
+.card,.panel,.order{background:var(--panel);border:1px solid var(--line);border-radius:16px}
+.card{overflow:hidden}
+.pic{height:140px;background:linear-gradient(135deg,#111,#050505);display:grid;place-items:center;font-size:68px;border-bottom:1px solid #2b2300}
+.pic img{width:100%;height:100%;object-fit:cover}
+.cardBody{padding:16px}
+.card h3{margin:0 0 7px;color:#fff}
+.card p{color:var(--muted);min-height:40px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.price{font-weight:900;font-size:20px;color:#ffd34d}
+.btn,.primary{background:var(--gold2);color:#111;font-weight:900}
+.secondary{background:#2a2a2a;color:#fff}
+.danger{background:var(--red);color:#fff}
+.cart{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:40;background:#050505;color:#fff;border:1px solid #6d5400;padding:12px 15px;border-radius:15px;box-shadow:0 12px 35px #0009;display:flex;gap:12px;align-items:center}
+.hidden{display:none!important}
+.modal{position:fixed;inset:0;background:#000b;display:grid;place-items:center;z-index:50;padding:14px}
+.modalBox{width:min(540px,100%);max-height:90vh;overflow:auto;background:#151515;border:1px solid #6b5200;border-radius:18px;padding:20px}
+.modalBox h2{color:#ffd34d;margin-top:0}
+.field{margin-bottom:11px}.field label{display:block;font-size:12px;font-weight:800;color:#ddd;margin-bottom:5px}
+input,textarea,select{width:100%;background:#0c0c0c;color:#fff;border:1px solid #3b3b3b;border-radius:9px;padding:11px}
+textarea{min-height:88px}
+.panel{padding:18px;margin-bottom:16px}
+.panel h2{color:#ffd34d}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+.stat{background:#121212;border:1px solid #403200;border-radius:14px;padding:16px}
+.stat small{color:#aaa}.stat strong{display:block;font-size:24px;color:#ffd34d;margin-top:5px}
+.orders{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
+.order{padding:15px}.order h3{margin:0;color:#ffd34d}.order p{color:#ccc}
+.order select{margin-top:10px}
+.productRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #2a2a2a}
+.productRow:last-child{border-bottom:0}
+.productActions{display:flex;gap:7px;flex-wrap:wrap}
+.qrGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.qrCard{background:#fff;color:#111;border-radius:15px;padding:15px;text-align:center}
+.qrCard img{width:180px;max-width:100%}.qrCard h3{margin:4px 0 10px}.qrCard p{font-size:12px;word-break:break-all}
+.empty{color:#aaa;text-align:center;padding:30px}
+.notice{background:#211a00;border:1px solid #6a5200;color:#ffe08a;padding:10px 12px;border-radius:10px;margin-bottom:12px}
+@media(max-width:760px){
+  .hero h1{font-size:30px}.stats{grid-template-columns:1fr 1fr}.productRow{align-items:flex-start;flex-direction:column}.wrap{padding:13px}.top{padding:10px}.brand{font-size:14px}.topActions button{padding:8px 10px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">🍔 CANTINHO <span>DOS GIGANTES</span></div>
+  <div class="topActions">
+    <button id="clientBtn" class="active" onclick="client()">Cliente</button>
+    <button id="adminBtn" onclick="adminLogin()">Admin</button>
+  </div>
+</header>
+
+<main class="wrap"><section id="app"></section></main>
+<div id="cart" class="cart hidden"></div>
+<div id="modal" class="modal hidden"></div>
+
 <script>
-let M,B=[],C="Todos";const $=x=>document.getElementById(x),R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"}),E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));async function api(u,o){let r=await fetch(u,o),j=await r.json();if(!r.ok)throw Error(j.error||"Erro");return j}
-async function client(){M=await api("/api/menu");let m=new URLSearchParams(location.search).get("mesa");$("app").innerHTML='<div class="hero"><h1>'+E(M.settings.name)+'</h1><p>'+E(M.settings.welcome)+'</p>'+(m?'<b>🪑 Mesa '+m+'</b>':'')+'</div><div class="tabs">'+["Todos",...M.categories.map(x=>x.name)].map(c=>'<button class="'+(c==C?"sel":"")+'" onclick="C=\''+E(c)+'\';render()">'+E(c)+'</button>').join("")+'</div><div id="products" class="grid"></div>';render()}
-function render(){let p=M.products.filter(x=>C=="Todos"||x.category==C);$("products").innerHTML=p.map(x=>'<div class="card"><div class="pic">'+(x.image?'<img src="'+E(x.image)+'">':x.emoji)+'</div><h3>'+E(x.name)+'</h3><p>'+E(x.description)+'</p><div class="row"><b class="price">'+R(x.price)+'</b><button class="btn" onclick="add('+x.id+')">Adicionar</button></div></div>').join("");cart()}
-function add(id){let p=M.products.find(x=>x.id==id),z=B.find(x=>x.product_id==id);z?z.quantity++:B.push({product_id:id,name:p.name,price:Number(p.price),quantity:1});cart()}
-function cart(){let n=B.reduce((a,x)=>a+x.quantity,0),v=B.reduce((a,x)=>a+x.quantity*x.price,0);$("cart").classList.toggle("hidden",!n);$("cart").innerHTML='🛒 '+n+' itens • <b>'+R(v)+'</b> <button class="btn" onclick="checkout()">Finalizar</button>'}
-function modal(h){$("modal").innerHTML='<div class="box">'+h+'</div>';$("modal").classList.remove("hidden")}function closeM(){$("modal").classList.add("hidden")}
-function checkout(){let m=new URLSearchParams(location.search).get("mesa")||prompt("Número da mesa","1");if(!m)return;modal("<h2>Confirmar pedido</h2>"+B.map(x=>"<p>"+x.quantity+"x "+E(x.name)+" — "+R(x.quantity*x.price)+"</p>").join("")+"<textarea id='obs' placeholder='Observação'></textarea><button class='btn' onclick='send("+Number(m)+")'>Enviar pedido</button>")}
-async function send(m){let r=await api("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:m,items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),observation:$("obs").value})});B=[];cart();modal("<h2>✅ Pedido enviado!</h2><p>Pedido #"+String(r.id).slice(-5)+"</p><button class='btn' onclick='closeM()'>OK</button>")}
-async function admin(){let p=prompt("Senha do administrador");if(p==="1234")dash();else alert("Senha incorreta")}
-async function dash(){let s=await api("/api/stats");$("app").innerHTML='<h1>Painel administrativo</h1><div class="stats"><div class="stat">Pedidos<b>'+s.orders+'</b></div><div class="stat">Faturamento<b>'+R(s.total)+'</b></div><div class="stat">Produtos<b>'+s.products+'</b></div><div class="stat">Mesas<b>'+s.tables+'</b></div></div><div class="tabs"><button onclick="orders()">🧾 Pedidos</button><button onclick="products()">🍔 Cardápio</button><button onclick="qrs()">🪑 QR Codes</button></div><div id="adminContent"></div>';orders()}
-async function orders(){let a=await api("/api/orders");$("adminContent").innerHTML='<div class="panel"><h2>Pedidos</h2><div class="orders">'+a.map(o=>'<div class="order"><b>#'+String(o.id).slice(-5)+' — Mesa '+o.table_number+'</b><p>'+o.items.map(i=>i.quantity+"x "+E(i.name)).join("<br>")+'</p><b>'+R(o.total)+'</b><select onchange="st('+o.id+',this.value)">'+["Recebido","Em preparo","Pronto","Entregue","Cancelado"].map(s=>'<option '+(s==o.status?"selected":"")+'>'+s+'</option>').join("")+'</select></div>').join("")+'</div></div>'}
-async function st(id,s){await api("/api/orders/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:s})});orders()}
-async function products(){let a=await api("/api/admin/products");$("adminContent").innerHTML='<div class="panel"><h2>Cardápio</h2><button class="btn" onclick="formP()">+ Produto</button>'+a.map(p=>'<div class="row" style="padding:10px 0;border-bottom:1px solid #ddd"><span>'+p.emoji+' <b>'+E(p.name)+'</b> — '+R(p.price)+'</span><span><button onclick="formP('+p.id+')">Editar</button> <button style="background:#e53935;color:white;border:0;border-radius:6px;padding:6px 10px;cursor:pointer" onclick="delP('+p.id+',\''+E(p.name).replace(/'/g,"\'")+'\')">Excluir</button></span></div>').join("")+'</div>'}
-async function formP(id){let a=await api("/api/admin/products"),p=id?a.find(x=>x.id==id):{name:"",description:"",price:"",category_id:1,emoji:"🍔",image:""},c=(await api("/api/menu")).categories;modal("<h2>Produto</h2><input id='n' placeholder='Nome' value='"+E(p.name)+"'><input id='v' type='number' step='.01' placeholder='Preço' value='"+p.price+"'><select id='c'>"+c.map(x=>"<option value='"+x.id+"' "+(x.id==p.category_id?"selected":"")+">"+E(x.name)+"</option>").join("")+"</select><input id='e' value='"+E(p.emoji)+"'><textarea id='d'>"+E(p.description)+"</textarea><input id='i' placeholder='URL da foto' value='"+E(p.image||"")+"'><button class='btn' onclick='saveP("+(id||0)+")'>Salvar</button>")}
-async function saveP(id){let x={name:$("n").value,description:$("d").value,price:Number($("v").value),category_id:Number($("c").value),emoji:$("e").value||"🍔",image:$("i").value||""};await api(id?"/api/products/"+id:"/api/products",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(x)});closeM();products()}
-async function delP(id,name){if(!confirm('Tem certeza que deseja excluir "'+name+'"?'))return;try{await api("/api/products/"+id,{method:"DELETE"});alert("Produto excluído com sucesso.");await products();}catch(e){alert("Não foi possível excluir: "+e.message)}}
-async function qrs(){let h='<div class="grid">';for(let i=1;i<=12;i++){let q=await api("/api/qrcode/"+i);h+='<div class="card" style="text-align:center"><h3>Mesa '+i+'</h3><img src="'+q.png+'" style="max-width:180px"><p>'+q.url+'</p></div>'}$("adminContent").innerHTML=h+"</div>"}
-client();</script></body></html>
+let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
+const $=x=>document.getElementById(x);
+const R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+
+async function api(url,opts={}){
+  const headers={...(opts.headers||{})};
+  if(adminToken)headers["X-Admin-Token"]=adminToken;
+  const r=await fetch(url,{...opts,headers});
+  const j=await r.json();
+  if(!r.ok)throw Error(j.error||"Erro");
+  return j;
+}
+
+function setMode(mode){
+  $("clientBtn").classList.toggle("active",mode==="client");
+  $("adminBtn").classList.toggle("active",mode==="admin");
+  $("cart").classList.toggle("hidden",mode==="admin"||B.length===0);
+}
+
+function modal(html){
+  $("modal").innerHTML='<div class="modalBox">'+html+'</div>';
+  $("modal").classList.remove("hidden");
+}
+function closeModal(){$("modal").classList.add("hidden")}
+
+async function client(){
+  setMode("client");
+  M=await api("/api/menu");
+  const mesa=new URLSearchParams(location.search).get("mesa");
+
+  $("app").innerHTML=
+    '<section class="hero">'+
+      '<h1>'+E(M.settings.name)+'</h1>'+
+      '<p>'+E(M.settings.welcome)+'</p>'+
+      (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':'')+
+    '</section>'+
+    '<div class="tabs">'+
+      ["Todos",...M.categories.map(x=>x.name)].map(c=>
+        '<button class="'+(c===C?"sel":"")+'" onclick="C=\''+E(c)+'\';renderMenu()">'+E(c)+'</button>'
+      ).join("")+
+    '</div>'+
+    '<div id="products" class="grid"></div>';
+
+  renderMenu();
+}
+
+function renderMenu(){
+  const products=M.products.filter(p=>C==="Todos"||p.category===C);
+  $("products").innerHTML=products.map(p=>
+    '<article class="card">'+
+      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'">':E(p.emoji))+'</div>'+
+      '<div class="cardBody">'+
+        '<h3>'+E(p.name)+'</h3>'+
+        '<p>'+E(p.description)+'</p>'+
+        '<div class="row">'+
+          '<b class="price">'+R(p.price)+'</b>'+
+          '<button class="btn" onclick="add('+p.id+')">Adicionar</button>'+
+        '</div>'+
+      '</div>'+
+    '</article>'
+  ).join("")||'<div class="empty">Nenhum produto nesta categoria.</div>';
+  renderCart();
+}
+
+function add(id){
+  const p=M.products.find(x=>x.id===id);
+  const x=B.find(x=>x.product_id===id);
+  x?x.quantity++:B.push({product_id:p.id,name:p.name,price:Number(p.price),quantity:1});
+  renderCart();
+}
+
+function renderCart(){
+  const n=B.reduce((a,x)=>a+x.quantity,0);
+  const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
+  $("cart").classList.toggle("hidden",!n||$("adminBtn").classList.contains("active"));
+  $("cart").innerHTML='🛒 <b>'+n+'</b> itens • <b>'+R(total)+'</b> <button class="btn" onclick="checkout()">Finalizar</button>';
+}
+
+function checkout(){
+  if(!B.length)return;
+  const mesa=new URLSearchParams(location.search).get("mesa")||prompt("Número da mesa:","1");
+  if(!mesa)return;
+
+  const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
+  modal(
+    '<h2>Confirmar pedido</h2>'+
+    '<div class="notice">Mesa <b>'+E(mesa)+'</b></div>'+
+    B.map(x=>'<p>'+x.quantity+'x '+E(x.name)+' — <b>'+R(x.quantity*x.price)+'</b></p>').join("")+
+    '<hr style="border-color:#333"><h3>Total: '+R(total)+'</h3>'+
+    '<div class="field"><label>Observação</label><textarea id="obs" placeholder="Ex.: sem cebola, bem passado..."></textarea></div>'+
+    '<button class="btn" onclick="sendOrder('+Number(mesa)+')">Enviar pedido</button> '+
+    '<button class="secondary" onclick="closeModal()">Voltar</button>'
+  );
+}
+
+async function sendOrder(mesa){
+  try{
+    const r=await api("/api/orders",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        table:mesa,
+        items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
+        observation:$("obs").value
+      })
+    });
+    B=[];renderCart();
+    modal(
+      '<div style="text-align:center">'+
+        '<div style="font-size:56px">✅</div>'+
+        '<h2>Pedido enviado!</h2>'+
+        '<p>Pedido <b>#'+r.id+'</b> — Mesa '+mesa+'</p>'+
+        '<button class="btn" onclick="closeModal()">OK</button>'+
+      '</div>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+function adminLogin(){
+  if(adminToken){dashboard();return}
+  setMode("admin");
+  modal(
+    '<h2>🔐 Área administrativa</h2>'+
+    '<div class="field"><label>Senha</label><input id="pin" type="password" inputmode="numeric" placeholder="Digite a senha"></div>'+
+    '<button class="btn" onclick="doLogin()">Entrar</button> '+
+    '<button class="secondary" onclick="closeModal();client()">Cancelar</button>'
+  );
+}
+
+async function doLogin(){
+  try{
+    const r=await api("/api/admin/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({pin:$("pin").value})
+    });
+    adminToken=r.token;
+    sessionStorage.setItem("cg_admin_token",adminToken);
+    closeModal();
+    dashboard();
+  }catch(e){alert(e.message)}
+}
+
+async function dashboard(){
+  setMode("admin");
+  try{
+    const s=await api("/api/stats");
+    $("app").innerHTML=
+      '<div class="row"><div><h1 style="margin-bottom:4px">Painel administrativo</h1><div style="color:#aaa">Cantinho dos Gigantes</div></div>'+
+      '<button class="secondary" onclick="logout()">Sair</button></div>'+
+      '<div class="stats">'+
+        '<div class="stat"><small>Pedidos</small><strong>'+s.orders+'</strong></div>'+
+        '<div class="stat"><small>Faturamento</small><strong>'+R(s.total)+'</strong></div>'+
+        '<div class="stat"><small>Produtos ativos</small><strong>'+s.products+'</strong></div>'+
+        '<div class="stat"><small>Mesas</small><strong>'+s.tables+'</strong></div>'+
+      '</div>'+
+      '<div class="tabs">'+
+        '<button onclick="orders()">🧾 Pedidos</button>'+
+        '<button onclick="products()">🍽️ Cardápio</button>'+
+        '<button onclick="settings()">⚙️ Configurações</button>'+
+        '<button onclick="qrs()">🪑 QR Codes</button>'+
+      '</div>'+
+      '<div id="adminContent"></div>';
+    orders();
+  }catch(e){
+    adminToken="";sessionStorage.removeItem("cg_admin_token");adminLogin();
+  }
+}
+
+function logout(){
+  adminToken="";
+  sessionStorage.removeItem("cg_admin_token");
+  client();
+}
+
+async function orders(){
+  try{
+    const a=await api("/api/orders");
+    $("adminContent").innerHTML=
+      '<div class="panel"><h2>Pedidos</h2>'+
+      (a.length?'<div class="orders">'+a.map(o=>
+        '<div class="order">'+
+          '<h3>#'+o.id+' — Mesa '+o.table_number+'</h3>'+
+          '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+'</p>'+
+          o.items.map(i=>'<div>'+i.quantity+'x '+E(i.name)+'</div>').join("")+
+          (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
+          '<h3>'+R(o.total)+'</h3>'+
+          '<select onchange="setStatus('+o.id+',this.value)">'+
+            ["Recebido","Em preparo","Pronto","Entregue","Cancelado"].map(s=>
+              '<option '+(s===o.status?"selected":"")+'>'+s+'</option>'
+            ).join("")+
+          '</select>'+
+        '</div>'
+      ).join("")+'</div>':'<div class="empty">Nenhum pedido registrado.</div>')+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+async function setStatus(id,status){
+  await api("/api/orders/"+id,{
+    method:"PATCH",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status})
+  });
+  orders();
+}
+
+async function products(){
+  try{
+    const a=await api("/api/admin/products");
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
+        a.map(p=>
+          '<div class="productRow">'+
+            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+' • '+R(p.price)+'</div></div>'+
+            '<div class="productActions">'+
+              '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
+              '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
+            '</div>'+
+          '</div>'
+        ).join("")+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+async function productForm(id){
+  try{
+    const products=await api("/api/admin/products");
+    const cats=await api("/api/admin/categories");
+    const p=id?products.find(x=>x.id===id):{
+      name:"",description:"",price:"",category_id:cats[0]?.id||1,emoji:"🍽️",image:""
+    };
+
+    modal(
+      '<h2>'+(id?'Editar produto':'Novo produto')+'</h2>'+
+      '<div class="field"><label>Nome</label><input id="pn" value="'+E(p.name)+'"></div>'+
+      '<div class="field"><label>Preço</label><input id="pp" type="number" step=".01" value="'+p.price+'"></div>'+
+      '<div class="field"><label>Categoria</label><select id="pc">'+
+        cats.map(c=>'<option value="'+c.id+'" '+(c.id===p.category_id?"selected":"")+'>'+E(c.name)+'</option>').join("")+
+      '</select></div>'+
+      '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
+      '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
+      '<div class="field"><label>URL da foto (opcional)</label><input id="pi" value="'+E(p.image||"")+'"></div>'+
+      '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+async function saveProduct(id){
+  try{
+    const payload={
+      name:$("pn").value,
+      description:$("pd").value,
+      price:Number($("pp").value),
+      category_id:Number($("pc").value),
+      emoji:$("pe").value||"🍽️",
+      image:$("pi").value||""
+    };
+    await api(id?"/api/products/"+id:"/api/products",{
+      method:id?"PUT":"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    closeModal();
+    products();
+  }catch(e){alert(e.message)}
+}
+
+async function deleteProduct(id,name){
+  if(!confirm('Tem certeza que deseja excluir "'+name+'"?'))return;
+  try{
+    await api("/api/products/"+id,{method:"DELETE"});
+    products();
+  }catch(e){alert(e.message)}
+}
+
+async function settings(){
+  try{
+    const m=await api("/api/menu");
+    modal(
+      '<h2>Configurações</h2>'+
+      '<div class="field"><label>Nome</label><input id="sn" value="'+E(m.settings.name)+'"></div>'+
+      '<div class="field"><label>Mensagem de boas-vindas</label><textarea id="sw">'+E(m.settings.welcome)+'</textarea></div>'+
+      '<button class="btn" onclick="saveSettings()">Salvar</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+async function saveSettings(){
+  try{
+    await api("/api/settings",{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:$("sn").value,welcome:$("sw").value})
+    });
+    closeModal();
+    dashboard();
+  }catch(e){alert(e.message)}
+}
+
+async function qrs(){
+  try{
+    let html='<div class="panel"><h2>QR Codes das Mesas</h2><div class="qrGrid">';
+    for(let i=1;i<=12;i++){
+      const q=await api("/api/qrcode/"+i);
+      html+=
+        '<div class="qrCard">'+
+          '<h3>MESA '+i+'</h3>'+
+          '<img src="'+q.png+'" alt="QR Mesa '+i+'">'+
+          '<p>'+E(q.url)+'</p>'+
+          '<a download="QR-Mesa-'+i+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+
+        '</div>';
+    }
+    html+='</div></div>';
+    $("adminContent").innerHTML=html;
+  }catch(e){alert(e.message)}
+}
+
+client();
+</script>
+</body>
+</html>
