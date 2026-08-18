@@ -906,6 +906,18 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
       limit 50
     `,[date])).rows;
 
+    const financial=(await pool.query(`
+      select
+        coalesce(sum(oi.quantity * coalesce(p.cost_price,0)),0)::numeric as cost
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      left join products p on p.id=oi.product_id
+      where a.status='Fechada'
+        and o.status<>'Cancelado'
+        and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
+    `,[date])).rows[0];
+
     const cash=(await pool.query(`
       select * from cash_sessions
       where status='Fechado'
@@ -920,7 +932,9 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
         pix:Number(summary.pix),
         dinheiro:Number(summary.dinheiro),
         cartao:Number(summary.cartao),
-        contas:summary.contas
+        contas:summary.contas,
+        custo:Number(financial.cost),
+        lucro_bruto:Number(summary.total)-Number(financial.cost)
       },
       accounts:accounts.map(x=>({...x,total:Number(x.total)})),
       products:products.map(x=>({...x,total:Number(x.total)})),
