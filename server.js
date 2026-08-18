@@ -101,6 +101,7 @@ async function init(){
 
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_quantity int NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_control boolean NOT NULL DEFAULT false;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_low_threshold int NOT NULL DEFAULT 5;
 
     CREATE TABLE IF NOT EXISTS stock_movements(
       id serial primary key,
@@ -296,7 +297,7 @@ app.get("/api/admin/products",requireAdmin,async(req,res)=>{
 
 app.get("/api/stock",requireAdmin,async(req,res)=>{
   try{
-    const rows=(await pool.query(`select p.id,p.name,p.emoji,p.stock_quantity,p.stock_control,c.name category
+    const rows=(await pool.query(`select p.id,p.name,p.emoji,p.stock_quantity,p.stock_control,p.stock_low_threshold,c.name category
       from products p join categories c on c.id=p.category_id where p.active=true order by c.id,p.name`)).rows;
     res.json(rows);
   }catch(e){res.status(500).json({error:"Erro ao carregar estoque."})}
@@ -305,13 +306,14 @@ app.get("/api/stock",requireAdmin,async(req,res)=>{
 app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
   const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
   const control=Boolean(req.body.stock_control);
+  const threshold=Math.max(0,Math.floor(Number(req.body.stock_low_threshold) || 0));
   const c=await pool.connect();
   try{
     await c.query("begin");
     const cur=await c.query("select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(req.params.id)]);
     if(!cur.rowCount){await c.query("rollback");return res.status(404).json({error:"Produto não encontrado."});}
     const previous=Number(cur.rows[0].stock_quantity||0);
-    const r=await c.query("update products set stock_quantity=$1,stock_control=$2 where id=$3 returning id,name,stock_quantity,stock_control",[quantity,control,Number(req.params.id)]);
+    const r=await c.query("update products set stock_quantity=$1,stock_control=$2,stock_low_threshold=$3 where id=$4 returning id,name,stock_quantity,stock_control,stock_low_threshold",[quantity,control,threshold,Number(req.params.id)]);
     if(previous!==quantity){
       await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
         values($1,'Ajuste manual',$2,$3,$4,'Correção manual de estoque')`,
