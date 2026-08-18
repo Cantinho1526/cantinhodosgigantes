@@ -59,68 +59,27 @@ textarea{min-height:88px}
 .qrCard img{width:180px;max-width:100%}.qrCard h3{margin:4px 0 10px}.qrCard p{font-size:12px;word-break:break-all}
 .empty{color:#aaa;text-align:center;padding:30px}
 .notice{background:#211a00;border:1px solid #6a5200;color:#ffe08a;padding:10px 12px;border-radius:10px;margin-bottom:12px}
-.mobileHint{color:#9d9d9d;font-size:12px;margin-top:8px}
-.cartSummary{display:flex;align-items:center;gap:7px;min-width:0}
-.cartSummary span{white-space:nowrap}
-
 @media(max-width:760px){
-  body{padding-bottom:86px}
-  .top{padding:9px 10px;gap:8px}
-  .brand{font-size:13px;line-height:1.15;max-width:52%}
-  .topActions{gap:6px}
-  .topActions button{padding:8px 9px;font-size:13px;border-radius:9px}
-  .wrap{padding:10px}
-  .hero{padding:18px 16px;border-radius:16px}
-  .hero h1{font-size:27px;line-height:1.05}
-  .hero p{font-size:14px;line-height:1.35}
-  .tableTag{display:inline-flex;align-items:center;gap:6px;font-size:14px;padding:7px 10px;margin-top:10px}
-  .tabs{
-    display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:7px;
-    overflow:visible;
-    margin:12px 0 14px;
-    padding:0;
-  }
-  .tabs button{
-    width:100%;
-    white-space:normal;
-    min-height:42px;
-    padding:9px 8px;
-    font-size:13px;
-    line-height:1.15;
-  }
-  .grid{grid-template-columns:1fr;gap:10px}
-  .card{display:grid;grid-template-columns:92px 1fr;min-height:120px}
-  .pic{height:100%;min-height:120px;font-size:46px;border-bottom:0;border-right:1px solid #2b2300}
-  .cardBody{padding:12px}
-  .card h3{font-size:17px;margin-bottom:5px}
-  .card p{font-size:13px;line-height:1.3;min-height:0;margin:0 0 10px}
-  .price{font-size:18px}
-  .card .row{align-items:center}
-  .card .btn{padding:10px 12px;min-width:94px}
-  .cart{
-    width:calc(100% - 20px);
-    bottom:10px;
-    justify-content:space-between;
-    padding:10px 12px;
-    border-radius:13px;
-    font-size:14px;
-  }
-  .cart .btn{padding:10px 12px}
-  .modal{padding:10px}
-  .modalBox{border-radius:15px;padding:16px}
-  .modalBox h2{font-size:22px}
-  .stats{grid-template-columns:1fr 1fr}
-  .stat{padding:12px}
-  .stat strong{font-size:21px}
-  .productRow{align-items:flex-start;flex-direction:column}
-  .productActions{width:100%}
-  .productActions button{flex:1}
-  .orders{grid-template-columns:1fr}
-  .qrGrid{grid-template-columns:1fr}
-  .qrCard img{width:220px}
+  .hero h1{font-size:30px}.stats{grid-template-columns:1fr 1fr}.productRow{align-items:flex-start;flex-direction:column}.wrap{padding:13px}.top{padding:10px}.brand{font-size:14px}.topActions button{padding:8px 10px}
 }
+
+.accountGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.accountCard{background:#121212;border:1px solid #4a3900;border-radius:15px;padding:15px}
+.accountCard.open{box-shadow:inset 0 0 0 1px #8a6a00}
+.accountCard h3{margin:0 0 8px;color:#ffd34d}
+.accountTotal{font-size:24px;font-weight:900;color:#ffd34d;margin:10px 0}
+.badgeOpen{display:inline-block;background:#3b2f00;color:#ffe17a;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:800}
+.badgeClosed{display:inline-block;background:#12351f;color:#86efac;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:800}
+.billOrder{padding:10px 0;border-bottom:1px solid #2a2a2a}
+.billOrder:last-child{border-bottom:0}
+.paymentGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.paymentGrid button{background:#232323;color:#fff;border:1px solid #3b3b3b}
+.paymentGrid button.selected{background:#ffbf00;color:#111;border-color:#ffbf00;font-weight:900}
+@media(max-width:760px){
+  .accountGrid{grid-template-columns:1fr}
+  .paymentGrid{grid-template-columns:1fr}
+}
+
 </style>
 </head>
 <body>
@@ -172,7 +131,7 @@ async function client(){
     '<section class="hero">'+
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
-      (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span><div class="mobileHint">Seu pedido será enviado automaticamente para esta mesa.</div>':'')+
+      (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':'')+
     '</section>'+
     '<div class="tabs">'+
       ["Todos",...M.categories.map(x=>x.name)].map(c=>
@@ -213,7 +172,7 @@ function renderCart(){
   const n=B.reduce((a,x)=>a+x.quantity,0);
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
   $("cart").classList.toggle("hidden",!n||$("adminBtn").classList.contains("active"));
-  $("cart").innerHTML='<div class="cartSummary"><span>🛒 <b>'+n+'</b> itens</span><span>•</span><span><b>'+R(total)+'</b></span></div><button class="btn" onclick="checkout()">Finalizar</button>';
+  $("cart").innerHTML='🛒 <b>'+n+'</b> itens • <b>'+R(total)+'</b> <button class="btn" onclick="checkout()">Finalizar</button>';
 }
 
 function checkout(){
@@ -224,7 +183,7 @@ function checkout(){
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
   modal(
     '<h2>Confirmar pedido</h2>'+
-    '<div class="notice">🪑 Pedido para a <b>Mesa '+E(mesa)+'</b></div>'+
+    '<div class="notice">Mesa <b>'+E(mesa)+'</b></div>'+
     B.map(x=>'<p>'+x.quantity+'x '+E(x.name)+' — <b>'+R(x.quantity*x.price)+'</b></p>').join("")+
     '<hr style="border-color:#333"><h3>Total: '+R(total)+'</h3>'+
     '<div class="field"><label>Observação</label><textarea id="obs" placeholder="Ex.: sem cebola, bem passado..."></textarea></div>'+
@@ -290,18 +249,19 @@ async function dashboard(){
       '<button class="secondary" onclick="logout()">Sair</button></div>'+
       '<div class="stats">'+
         '<div class="stat"><small>Pedidos</small><strong>'+s.orders+'</strong></div>'+
-        '<div class="stat"><small>Faturamento</small><strong>'+R(s.total)+'</strong></div>'+
-        '<div class="stat"><small>Produtos ativos</small><strong>'+s.products+'</strong></div>'+
-        '<div class="stat"><small>Mesas</small><strong>'+s.tables+'</strong></div>'+
+        '<div class="stat"><small>Mesas abertas</small><strong>'+s.open_tables+'</strong></div>'+
+        '<div class="stat"><small>Em aberto</small><strong>'+R(s.open_total)+'</strong></div>'+
+        '<div class="stat"><small>Recebido</small><strong>'+R(s.paid_total)+'</strong></div>'+
       '</div>'+
       '<div class="tabs">'+
+        '<button onclick="accounts()">🪑 Comandas</button>'+
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
-        '<button onclick="qrs()">🪑 QR Codes</button>'+
+        '<button onclick="qrs()">📱 QR Codes</button>'+
       '</div>'+
       '<div id="adminContent"></div>';
-    orders();
+    accounts();
   }catch(e){
     adminToken="";sessionStorage.removeItem("cg_admin_token");adminLogin();
   }
@@ -312,6 +272,100 @@ function logout(){
   sessionStorage.removeItem("cg_admin_token");
   client();
 }
+
+
+async function accounts(){
+  try{
+    const a=await api("/api/accounts");
+    const open=a.filter(x=>x.status==="Aberta");
+    $("adminContent").innerHTML=
+      '<div class="panel"><div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
+      (open.length?'<div class="accountGrid">'+open.map(x=>
+        '<div class="accountCard open">'+
+          '<span class="badgeOpen">ABERTA</span>'+
+          '<h3>Mesa '+x.table_number+'</h3>'+
+          '<div>'+x.order_count+' pedido(s)</div>'+
+          '<div class="accountTotal">'+R(x.total)+'</div>'+
+          '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
+        '</div>'
+      ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+async function viewAccount(tableNumber){
+  try{
+    const data=await api("/api/accounts/table/"+tableNumber);
+    if(!data.open){alert("Esta mesa não possui comanda aberta.");accounts();return}
+
+    const account=data.account;
+    modal(
+      '<h2>🪑 Comanda — Mesa '+tableNumber+'</h2>'+
+      '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
+      data.orders.map(o=>
+        '<div class="billOrder">'+
+          '<b>Pedido #'+o.id+'</b> • '+new Date(o.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+
+          (o.status==="Cancelado"?'<div style="color:#fca5a5">CANCELADO</div>':'')+
+          '<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+
+          (o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+
+          '<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div>'+
+        '</div>'
+      ).join("")+
+      '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
+      '<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> '+
+      '<button class="secondary" onclick="closeModal()">Voltar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+let selectedPayment="";
+function closeAccountForm(accountId,tableNumber,total){
+  selectedPayment="";
+  modal(
+    '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
+    '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
+    '<p>Escolha a forma de pagamento:</p>'+
+    '<div class="paymentGrid">'+
+      '<button id="payPIX" onclick="selectPayment(\'PIX\')">PIX</button>'+
+      '<button id="payDinheiro" onclick="selectPayment(\'Dinheiro\')">Dinheiro</button>'+
+      '<button id="payCartao" onclick="selectPayment(\'Cartão\')">Cartão</button>'+
+    '</div>'+
+    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">Confirmar pagamento</button> '+
+    '<button class="secondary" onclick="viewAccount('+tableNumber+')">Voltar</button>'
+  );
+}
+
+function selectPayment(method){
+  selectedPayment=method;
+  ["PIX","Dinheiro","Cartão"].forEach(x=>{
+    const id=x==="Cartão"?"payCartao":"pay"+x;
+    const el=$(id);
+    if(el)el.classList.toggle("selected",x===method);
+  });
+}
+
+async function confirmCloseAccount(accountId,tableNumber){
+  if(!selectedPayment){alert("Escolha a forma de pagamento.");return}
+  if(!confirm("Confirmar fechamento da conta da Mesa "+tableNumber+" em "+selectedPayment+"?"))return;
+
+  try{
+    const r=await api("/api/accounts/"+accountId+"/close",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({payment_method:selectedPayment})
+    });
+    modal(
+      '<div style="text-align:center">'+
+        '<div style="font-size:56px">✅</div>'+
+        '<h2>Conta fechada!</h2>'+
+        '<p>Mesa '+r.table_number+'</p>'+
+        '<p><b>'+R(r.total)+'</b> • '+E(r.payment_method)+'</p>'+
+        '<button class="btn" onclick="closeModal();dashboard()">OK</button>'+
+      '</div>'
+    );
+  }catch(e){alert(e.message)}
+}
+
 
 async function orders(){
   try{
