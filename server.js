@@ -81,8 +81,20 @@ async function init(){
       unit_price numeric(10,2) not null
     );
 
+    CREATE TABLE IF NOT EXISTS cash_sessions(
+      id serial primary key,
+      status text not null default 'Aberto',
+      opening_amount numeric(10,2) not null default 0,
+      opened_at timestamptz not null default now(),
+      closed_at timestamptz,
+      closing_amount numeric(10,2),
+      expected_amount numeric(10,2),
+      notes text default ''
+    );
+
     CREATE INDEX IF NOT EXISTS idx_orders_account_id ON orders(account_id);
     CREATE INDEX IF NOT EXISTS idx_accounts_table_status ON table_accounts(table_number,status);
+    CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
   `);
 
   await pool.query(`
@@ -424,6 +436,113 @@ app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
     const png=await QRCode.toDataURL(url,{width:700,margin:2});
     res.json({url,png});
   }catch(e){res.status(500).json({error:"Erro ao gerar QR Code."})}
+});
+
+
+// CAIXA E HISTÓRICO DE VENDAS
+app.get("/api/sales/history",requireAdmin,async(req,res)=>{
+  try{
+    const rows=(await pool.query(`
+      select a.id,a.table_number,a.payment_method,a.opened_at,a.closed_at,
+             coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+             count(o.id) filter(where o.status<>'Cancelado')::int order_count
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+      group by a.id
+      order by a.closed_at desc nulls last,a.id desc
+      limit 300
+    `)).rows;
+    res.json(rows);
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao carregar histórico de vendas."});
+  }
+});
+
+app.get("/api/cash",requireAdmin,async(req,res)=>{
+  try{
+    const session=(await pool.query(`
+      select * from cash_sessions where status='Aberto' order by id desc limit 1
+    `)).rows[0]||null;
+
+    let summary={pix:0,dinheiro:0,cartao:0,sales_total:0,count:0};
+    if(session){
+      const r=(await pool.query(`
+        select
+          coalesce(sum(x.total) filter(where x.payment_method='PIX'),0)::numeric pix,
+          coalesce(sum(x.total) filter(where x.payment_method='Dinheiro'),0)::numeric dinheiro,
+          coalesce(sum(x.total) filter(where x.payment_method='Cartão'),0)::numeric cartao,
+          coalesce(sum(x.total),0)::numeric sales_total,
+          count(*)::int count
+        from (
+          select a.id,a.payment_method,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+          from table_accounts a
+          left join orders o on o.account_id=a.id
+          where a.status='Fechada' and a.closed_at>= $1
+          group by a.id
+        ) x
+      `,[session.opened_at])).rows[0];
+      summary={pix:Number(r.pix),dinheiro:Number(r.dinheiro),cartao:Number(r.cartao),sales_total:Number(r.sales_total),count:r.count};
+    }
+    res.json({session,summary});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao carregar caixa."});
+  }
+});
+
+app.post("/api/cash/open",requireAdmin,async(req,res)=>{
+  const opening=Number(req.body.opening_amount||0);
+  if(!Number.isFinite(opening)||opening<0)return res.status(400).json({error:"Valor inicial inválido."});
+  try{
+    const exists=(await pool.query("select id from cash_sessions where status='Aberto' limit 1")).rowCount;
+    if(exists)return res.status(400).json({error:"Já existe um caixa aberto."});
+    const row=(await pool.query(`
+      insert into cash_sessions(opening_amount,status) values($1,'Aberto') returning *
+    `,[opening])).rows[0];
+    res.json({ok:true,session:row});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao abrir caixa."});
+  }
+});
+
+app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
+  const closing=Number(req.body.closing_amount);
+  if(!Number.isFinite(closing)||closing<0)return res.status(400).json({error:"Informe o valor contado no caixa."});
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const session=(await c.query(`select * from cash_sessions where id=$1 and status='Aberto' for update`,[Number(req.params.id)])).rows[0];
+    if(!session){await c.query("rollback");return res.status(404).json({error:"Caixa aberto não encontrado."});}
+    const r=(await c.query(`
+      select coalesce(sum(x.total),0)::numeric total
+      from (
+        select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a left join orders o on o.account_id=a.id
+        where a.status='Fechada' and a.closed_at>= $1 and a.payment_method='Dinheiro'
+        group by a.id
+      ) x
+    `,[session.opened_at])).rows[0];
+    const expected=Number(session.opening_amount)+Number(r.total);
+    const row=(await c.query(`
+      update cash_sessions set status='Fechado',closed_at=now(),closing_amount=$1,expected_amount=$2,notes=$3
+      where id=$4 returning *
+    `,[closing,expected,String(req.body.notes||""),session.id])).rows[0];
+    await c.query("commit");
+    res.json({ok:true,session:row,difference:closing-expected});
+  }catch(e){
+    await c.query("rollback");
+    console.error(e);
+    res.status(500).json({error:"Erro ao fechar caixa."});
+  }finally{c.release()}
+});
+
+app.get("/api/cash/history",requireAdmin,async(req,res)=>{
+  try{
+    res.json((await pool.query("select * from cash_sessions order by id desc limit 100")).rows);
+  }catch(e){res.status(500).json({error:"Erro ao carregar histórico do caixa."})}
 });
 
 app.get("/api/stats",requireAdmin,async(req,res)=>{
