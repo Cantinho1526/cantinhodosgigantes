@@ -615,6 +615,86 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
 });
 
 
+
+app.get("/api/reports/period",requireAdmin,async(req,res)=>{
+  try{
+    const start=String(req.query.start||"").trim();
+    const end=String(req.query.end||"").trim();
+
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)){
+      return res.status(400).json({error:"Período inválido."});
+    }
+
+    const summary=(await pool.query(`
+      select
+        coalesce(sum(case when payment_method='PIX' then total else 0 end),0)::numeric pix,
+        coalesce(sum(case when payment_method='Dinheiro' then total else 0 end),0)::numeric dinheiro,
+        coalesce(sum(case when payment_method='Cartão' then total else 0 end),0)::numeric cartao,
+        coalesce(sum(total),0)::numeric total,
+        count(*)::int contas
+      from (
+        select a.id,a.payment_method,
+          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
+        group by a.id,a.payment_method
+      ) x
+    `,[start,end])).rows[0];
+
+    const products=(await pool.query(`
+      select oi.product_name name,
+        sum(oi.quantity)::int quantity,
+        sum(oi.quantity*oi.unit_price)::numeric total
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      where a.status='Fechada'
+        and o.status<>'Cancelado'
+        and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
+      group by oi.product_name
+      order by quantity desc,total desc
+      limit 100
+    `,[start,end])).rows;
+
+    const days=(await pool.query(`
+      select
+        (a.closed_at at time zone 'America/Sao_Paulo')::date day,
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+        count(distinct a.id)::int contas
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+        and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
+      group by day
+      order by day
+    `,[start,end])).rows;
+
+    const total=Number(summary.total);
+    const contas=Number(summary.contas);
+    const items=products.reduce((n,p)=>n+Number(p.quantity),0);
+
+    res.json({
+      start,end,
+      summary:{
+        total,
+        pix:Number(summary.pix),
+        dinheiro:Number(summary.dinheiro),
+        cartao:Number(summary.cartao),
+        contas,
+        ticket_medio:contas?total/contas:0,
+        itens:items
+      },
+      products:products.map(x=>({...x,total:Number(x.total)})),
+      days:days.map(x=>({...x,total:Number(x.total)}))
+    });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao gerar relatório por período."});
+  }
+});
+
 app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
   try{
     const date=String(req.query.date||"").trim();
