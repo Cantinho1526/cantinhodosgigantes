@@ -108,8 +108,21 @@ const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt
 async function api(url,opts={}){
   const headers={...(opts.headers||{})};
   if(adminToken)headers["X-Admin-Token"]=adminToken;
+
   const r=await fetch(url,{...opts,headers});
   const j=await r.json();
+
+  if(r.status===401 && url!=="/api/admin/login"){
+    adminToken="";
+    sessionStorage.removeItem("cg_admin_token");
+    closeModal();
+    setTimeout(()=>{
+      alert("Sua sessão administrativa expirou. Entre novamente.");
+      adminLogin();
+    },0);
+    throw Error("Sessão administrativa expirada.");
+  }
+
   if(!r.ok)throw Error(j.error||"Erro");
   return j;
 }
@@ -223,7 +236,7 @@ function adminLogin(){
   if(adminToken){dashboard();return}
   setMode("admin");
   modal(
-    '<h2>🔐 Área administrativa</h2>'+
+    '<h2>🔐 Área administrativa</h2><div class="notice">Sessão protegida por até 12 horas. Se o servidor reiniciar, o login continua válido.</div>'+
     '<div class="field"><label>Senha</label><input id="pin" type="password" inputmode="numeric" placeholder="Digite a senha"></div>'+
     '<button class="btn" onclick="doLogin()">Entrar</button> '+
     '<button class="secondary" onclick="closeModal();client()">Cancelar</button>'
