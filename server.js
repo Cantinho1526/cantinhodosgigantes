@@ -102,6 +102,7 @@ async function init(){
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_quantity int NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_control boolean NOT NULL DEFAULT false;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_low_threshold int NOT NULL DEFAULT 5;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price numeric(10,2) NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS stock_movements(
       id serial primary key,
@@ -552,10 +553,10 @@ app.post("/api/products",requireAdmin,async(req,res)=>{
   }
   try{
     const r=await pool.query(
-      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control)
-       values($1,$2,$3,$4,$5,$6,true,$7,$8) returning id`,
+      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price)
+       values($1,$2,$3,$4,$5,$6,true,$7,$8,$9) returning id`,
       [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control)]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0)]
     );
     res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:"Erro ao cadastrar produto."})}
@@ -565,9 +566,9 @@ app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   const x=req.body;
   try{
     await pool.query(
-      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8 where id=$9`,
+      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9 where id=$10`,
       [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Number(req.params.id)]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Number(req.params.id)]
     );
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
