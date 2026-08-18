@@ -102,6 +102,17 @@ async function init(){
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_quantity int NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_control boolean NOT NULL DEFAULT false;
 
+    CREATE TABLE IF NOT EXISTS stock_movements(
+      id serial primary key,
+      product_id int references products(id),
+      movement_type text not null,
+      quantity int not null,
+      previous_quantity int not null,
+      new_quantity int not null,
+      note text default '',
+      created_at timestamptz not null default now()
+    );
+
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS account_id int REFERENCES table_accounts(id);
 
     CREATE TABLE IF NOT EXISTS order_items(
@@ -292,6 +303,50 @@ app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
     if(!r.rowCount)return res.status(404).json({error:"Produto não encontrado."});
     res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:"Erro ao atualizar estoque."})}
+});
+
+
+app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
+  const quantity=Math.floor(Number(req.body.quantity)||0);
+  const note=String(req.body.note||"").trim();
+  if(quantity<=0)return res.status(400).json({error:"Informe uma quantidade de entrada maior que zero."});
+
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const r=await c.query(
+      "select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",
+      [Number(req.params.id)]
+    );
+    if(!r.rowCount){
+      await c.query("rollback");
+      return res.status(404).json({error:"Produto não encontrado."});
+    }
+
+    const p=r.rows[0];
+    const previous=Number(p.stock_quantity||0);
+    const next=previous+quantity;
+
+    await c.query(
+      "update products set stock_quantity=$1,stock_control=true where id=$2",
+      [next,p.id]
+    );
+
+    await c.query(
+      `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+       values($1,'Entrada',$2,$3,$4,$5)`,
+      [p.id,quantity,previous,next,note]
+    );
+
+    await c.query("commit");
+    res.json({ok:true,id:p.id,name:p.name,previous_quantity:previous,entry_quantity:quantity,stock_quantity:next,stock_control:true});
+  }catch(e){
+    await c.query("rollback");
+    console.error(e);
+    res.status(500).json({error:"Erro ao registrar entrada de estoque."});
+  }finally{
+    c.release();
+  }
 });
 
 app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
