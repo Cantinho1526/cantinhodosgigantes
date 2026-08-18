@@ -625,72 +625,82 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       return res.status(400).json({error:"Período inválido."});
     }
 
-    const summary=(await pool.query(`
+    if(start>end){
+      return res.status(400).json({error:"A data inicial não pode ser maior que a data final."});
+    }
+
+    const accounts=(await pool.query(`
       select
-        coalesce(sum(case when payment_method='PIX' then total else 0 end),0)::numeric pix,
-        coalesce(sum(case when payment_method='Dinheiro' then total else 0 end),0)::numeric dinheiro,
-        coalesce(sum(case when payment_method='Cartão' then total else 0 end),0)::numeric cartao,
-        coalesce(sum(total),0)::numeric total,
-        count(*)::int contas
-      from (
-        select a.id,a.payment_method,
-          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
-        from table_accounts a
-        left join orders o on o.account_id=a.id
-        where a.status='Fechada'
-          and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
-        group by a.id,a.payment_method
-      ) x
-    `,[start,end])).rows[0];
+        a.id,
+        a.payment_method,
+        a.closed_at,
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric as total
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
+        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')
+      group by a.id,a.payment_method,a.closed_at
+      order by a.closed_at
+    `,[start,end])).rows;
+
+    let pix=0,dinheiro=0,cartao=0,total=0;
+    for(const a of accounts){
+      const value=Number(a.total);
+      total+=value;
+      if(a.payment_method==="PIX")pix+=value;
+      else if(a.payment_method==="Dinheiro")dinheiro+=value;
+      else if(a.payment_method==="Cartão")cartao+=value;
+    }
 
     const products=(await pool.query(`
-      select oi.product_name name,
-        sum(oi.quantity)::int quantity,
-        sum(oi.quantity*oi.unit_price)::numeric total
+      select
+        oi.product_name as name,
+        sum(oi.quantity)::int as quantity,
+        sum(oi.quantity*oi.unit_price)::numeric as total
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
       where a.status='Fechada'
         and o.status<>'Cancelado'
-        and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
+        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
+        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')
       group by oi.product_name
-      order by quantity desc,total desc
-      limit 100
+      order by sum(oi.quantity) desc,sum(oi.quantity*oi.unit_price) desc
     `,[start,end])).rows;
 
-    const days=(await pool.query(`
-      select
-        (a.closed_at at time zone 'America/Sao_Paulo')::date day,
-        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
-        count(distinct a.id)::int contas
-      from table_accounts a
-      left join orders o on o.account_id=a.id
-      where a.status='Fechada'
-        and (a.closed_at at time zone 'America/Sao_Paulo')::date between $1::date and $2::date
-      group by day
-      order by day
-    `,[start,end])).rows;
+    const byDay={};
+    for(const a of accounts){
+      const d=new Date(a.closed_at);
+      const key=new Intl.DateTimeFormat("en-CA",{
+        timeZone:"America/Sao_Paulo",
+        year:"numeric",month:"2-digit",day:"2-digit"
+      }).format(d);
+      if(!byDay[key])byDay[key]={day:key,contas:0,total:0};
+      byDay[key].contas++;
+      byDay[key].total+=Number(a.total);
+    }
 
-    const total=Number(summary.total);
-    const contas=Number(summary.contas);
+    const days=Object.values(byDay).sort((a,b)=>a.day.localeCompare(b.day));
     const items=products.reduce((n,p)=>n+Number(p.quantity),0);
+    const contas=accounts.length;
 
     res.json({
       start,end,
       summary:{
         total,
-        pix:Number(summary.pix),
-        dinheiro:Number(summary.dinheiro),
-        cartao:Number(summary.cartao),
+        pix,
+        dinheiro,
+        cartao,
         contas,
         ticket_medio:contas?total/contas:0,
         itens:items
       },
       products:products.map(x=>({...x,total:Number(x.total)})),
-      days:days.map(x=>({...x,total:Number(x.total)}))
+      days
     });
   }catch(e){
-    console.error(e);
+    console.error("ERRO RELATORIO PERIODO:",e);
     res.status(500).json({error:"Erro ao gerar relatório por período."});
   }
 });
