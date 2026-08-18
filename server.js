@@ -614,6 +614,85 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
   }
 });
 
+
+app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
+  try{
+    const date=String(req.query.date||"").trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      return res.status(400).json({error:"Data inválida."});
+    }
+
+    const summary=(await pool.query(`
+      select
+        coalesce(sum(case when payment_method='PIX' then total else 0 end),0)::numeric pix,
+        coalesce(sum(case when payment_method='Dinheiro' then total else 0 end),0)::numeric dinheiro,
+        coalesce(sum(case when payment_method='Cartão' then total else 0 end),0)::numeric cartao,
+        coalesce(sum(total),0)::numeric total,
+        count(*)::int contas
+      from (
+        select a.id,a.payment_method,
+          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
+        group by a.id,a.payment_method
+      ) x
+    `,[date])).rows[0];
+
+    const accounts=(await pool.query(`
+      select a.id,a.table_number,a.payment_method,a.closed_at,
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+        count(o.id) filter(where o.status<>'Cancelado')::int order_count
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+        and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
+      group by a.id
+      order by a.closed_at desc
+    `,[date])).rows;
+
+    const products=(await pool.query(`
+      select oi.product_name name,
+        sum(oi.quantity)::int quantity,
+        sum(oi.quantity*oi.unit_price)::numeric total
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      where a.status='Fechada'
+        and o.status<>'Cancelado'
+        and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
+      group by oi.product_name
+      order by quantity desc,total desc
+      limit 50
+    `,[date])).rows;
+
+    const cash=(await pool.query(`
+      select * from cash_sessions
+      where status='Fechado'
+        and (closed_at at time zone 'America/Sao_Paulo')::date=$1::date
+      order by closed_at desc
+    `,[date])).rows;
+
+    res.json({
+      date,
+      summary:{
+        total:Number(summary.total),
+        pix:Number(summary.pix),
+        dinheiro:Number(summary.dinheiro),
+        cartao:Number(summary.cartao),
+        contas:summary.contas
+      },
+      accounts:accounts.map(x=>({...x,total:Number(x.total)})),
+      products:products.map(x=>({...x,total:Number(x.total)})),
+      cash
+    });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao gerar relatório diário."});
+  }
+});
+
 app.get("/health",async(req,res)=>{
   try{
     await pool.query("select 1");
