@@ -609,6 +609,12 @@ async function stock(lowOnly){
             '</div></div>';
         }).join(""):'<div class="empty">Nenhum produto com estoque baixo no momento. ✅</div>')+
       '</div>';
+    // Ao abrir ou trocar o filtro, leva a tela ao início do painel de estoque,
+    // garantindo que os botões do filtro fiquem visíveis.
+    requestAnimationFrame(()=>{
+      const el=$("adminContent");
+      if(el) el.scrollIntoView({behavior:"auto",block:"start"});
+    });
   }catch(e){alert(e.message)}
 }
 
