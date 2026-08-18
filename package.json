@@ -1,7 +1,8 @@
 {
   "name": "cantinho-dos-gigantes",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
+  "description": "Cantinho dos Gigantes - cardápio, pedidos, QR Codes e painel administrativo",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
