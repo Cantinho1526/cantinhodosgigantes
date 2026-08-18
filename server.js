@@ -21,7 +21,36 @@ const pool=new Pool({
 app.use(express.json({limit:"1mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
-const adminTokens=new Set();
+const ADMIN_SESSION_HOURS=12;
+
+function createAdminToken(){
+  const payload={
+    role:"admin",
+    exp:Date.now()+(ADMIN_SESSION_HOURS*60*60*1000)
+  };
+  const body=Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig=crypto.createHmac("sha256",ADMIN_PIN).update(body).digest("base64url");
+  return body+"."+sig;
+}
+
+function verifyAdminToken(token){
+  try{
+    if(!token||typeof token!=="string")return false;
+    const [body,sig]=token.split(".");
+    if(!body||!sig)return false;
+
+    const expected=crypto.createHmac("sha256",ADMIN_PIN).update(body).digest("base64url");
+    const a=Buffer.from(sig);
+    const b=Buffer.from(expected);
+
+    if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return false;
+
+    const payload=JSON.parse(Buffer.from(body,"base64url").toString("utf8"));
+    return payload.role==="admin" && Number(payload.exp)>Date.now();
+  }catch(e){
+    return false;
+  }
+}
 
 async function init(){
   await pool.query(`
@@ -113,8 +142,10 @@ async function init(){
 
 function requireAdmin(req,res,next){
   const token=req.headers["x-admin-token"];
-  if(!token||!adminTokens.has(token)){
-    return res.status(401).json({error:"Acesso administrativo não autorizado."});
+  if(!verifyAdminToken(token)){
+    return res.status(401).json({
+      error:"Sessão administrativa expirada. Entre novamente."
+    });
   }
   next();
 }
@@ -142,9 +173,8 @@ app.post("/api/admin/login",(req,res)=>{
   if(String(req.body.pin||"")!==ADMIN_PIN){
     return res.status(401).json({error:"Senha incorreta."});
   }
-  const token=crypto.randomBytes(24).toString("hex");
-  adminTokens.add(token);
-  res.json({ok:true,token});
+  const token=createAdminToken();
+  res.json({ok:true,token,expires_in_hours:ADMIN_SESSION_HOURS});
 });
 
 app.get("/api/menu",async(req,res)=>{
