@@ -581,24 +581,33 @@ async function deleteProduct(id,name){
   }catch(e){alert(e.message)}
 }
 
-async function stock(){
+let stockLowOnly=false;
+
+async function stock(lowOnly){
   try{
+    if(typeof lowOnly==="boolean")stockLowOnly=lowOnly;
     const a=await api("/api/stock");
     const controlled=a.filter(p=>p.stock_control);
-    const low=controlled.filter(p=>Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5)).length;
+    const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
+    const low=controlled.filter(isLow);
+    const visible=stockLowOnly?a.filter(isLow):a;
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📦 Estoque</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low+' com estoque baixo</div></div></div>'+
-        '<div class="notice">Ative o controle nos produtos desejados e informe a quantidade atual. A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque.</div>'+
-        a.map(p=>{
-          const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=p.stock_control&&q<=threshold;
+        '<div class="row"><div><h2>📦 Estoque</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição</div></div></div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">'+
+          '<button class="'+(stockLowOnly?'btn':'secondary')+'" onclick="stock(true)">⚠️ Somente estoque baixo ('+low.length+')</button>'+
+          '<button class="'+(!stockLowOnly?'btn':'secondary')+'" onclick="stock(false)">📦 Mostrar todos</button>'+
+        '</div>'+
+        '<div class="notice">'+(stockLowOnly?'Mostrando somente produtos controlados que atingiram o limite de estoque baixo.':'Ative o controle nos produtos desejados e informe a quantidade atual. A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque.')+'</div>'+
+        (visible.length?visible.map(p=>{
+          const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=isLow(p);
           return '<div class="productRow">'+
-            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+'</div></div>'+
+            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+
             '<div class="productActions" style="align-items:center">'+
               '<span style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</span>'+
               '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button>'+
             '</div></div>';
-        }).join("")+
+        }).join(""):'<div class="empty">Nenhum produto com estoque baixo no momento. ✅</div>')+
       '</div>';
   }catch(e){alert(e.message)}
 }
