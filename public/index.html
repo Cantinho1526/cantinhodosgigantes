@@ -238,24 +238,32 @@ async function client(){
 
 function renderMenu(){
   const products=M.products.filter(p=>C==="Todos"||p.category===C);
-  $("products").innerHTML=products.map(p=>
-    '<article class="card">'+
+  $("products").innerHTML=products.map(p=>{
+    const soldOut=Boolean(p.stock_control)&&Number(p.stock_quantity)<=0;
+    return '<article class="card">'+
       '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'">':E(p.emoji))+'</div>'+
       '<div class="cardBody">'+
         '<h3>'+E(p.name)+'</h3>'+
         '<p>'+E(p.description)+'</p>'+
         '<div class="row">'+
           '<b class="price">'+R(p.price)+'</b>'+
-          '<button class="btn" onclick="add('+p.id+')">Adicionar</button>'+
+          (soldOut
+            ? '<button class="danger" disabled style="cursor:not-allowed;opacity:.85">ESGOTADO</button>'
+            : '<button class="btn" onclick="add('+p.id+')">Adicionar</button>')+
         '</div>'+
       '</div>'+
-    '</article>'
-  ).join("")||'<div class="empty">Nenhum produto nesta categoria.</div>';
+    '</article>';
+  }).join("")||'<div class="empty">Nenhum produto nesta categoria.</div>';
   renderCart();
 }
 
 function add(id){
   const p=M.products.find(x=>x.id===id);
+  if(!p)return;
+  if(Boolean(p.stock_control)&&Number(p.stock_quantity)<=0){
+    alert("Este produto está esgotado.");
+    return;
+  }
   const x=B.find(x=>x.product_id===id);
   x?x.quantity++:B.push({product_id:p.id,name:p.name,price:Number(p.price),quantity:1});
   renderCart();
