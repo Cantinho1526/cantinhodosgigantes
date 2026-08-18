@@ -601,8 +601,15 @@ async function stockForm(id){
     modal('<h2>📦 Estoque — '+E(p.name)+'</h2>'+
       '<div class="field"><label><input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
-      '<div class="notice">Estoque baixo: o painel sinaliza quando houver 5 unidades ou menos.</div>'+
-      '<button class="btn" onclick="saveStock('+id+')">Salvar estoque</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+      '<div class="notice">Use <b>Salvar estoque</b> para correções manuais. Para reposição de mercadoria, prefira a entrada abaixo.</div>'+
+      '<hr style="border:0;border-top:1px solid #333;margin:18px 0">'+
+      '<h3>➕ Entrada de estoque</h3>'+
+      '<div class="field"><label>Quantidade que está entrando</label><input id="ste" type="number" min="1" step="1" placeholder="Ex.: 20"></div>'+
+      '<div class="field"><label>Observação (opcional)</label><input id="sten" placeholder="Ex.: Compra / reposição"></div>'+
+      '<div class="notice">Estoque atual: <b>'+Number(p.stock_quantity||0)+'</b>. A entrada será somada automaticamente.</div>'+
+      '<button class="btn" onclick="stockEntry('+id+')">➕ Registrar entrada</button> '+
+      '<button class="secondary" onclick="saveStock('+id+')">Salvar ajuste manual</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button>');
   }catch(e){alert(e.message)}
 }
 
@@ -610,6 +617,27 @@ async function saveStock(id){
   try{
     await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0))})});
     closeModal();stock();
+  }catch(e){alert(e.message)}
+}
+
+
+async function stockEntry(id){
+  try{
+    const quantity=Math.floor(Number($("ste").value)||0);
+    if(quantity<=0){alert("Informe uma quantidade maior que zero.");return}
+    const note=$("sten").value.trim();
+
+    if(!confirm("Registrar entrada de "+quantity+" unidade(s) no estoque?"))return;
+
+    const r=await api("/api/stock/"+id+"/entry",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({quantity,note})
+    });
+
+    alert("Entrada registrada! Estoque: "+r.previous_quantity+" → "+r.stock_quantity+" un.");
+    closeModal();
+    stock();
   }catch(e){alert(e.message)}
 }
 
