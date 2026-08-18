@@ -355,6 +355,7 @@ async function dashboard(){
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="stock()">📦 Estoque</button>'+
+        '<button onclick="stockHistory()">📋 Mov. Estoque</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
         '<button onclick="qrs()">📱 QR Codes</button>'+
       '</div>'+
@@ -590,6 +591,34 @@ async function stock(){
               '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button>'+
             '</div></div>';
         }).join("")+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+async function stockHistory(){
+  try{
+    const a=await api("/api/stock/history");
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><div><h2>📋 Histórico de estoque</h2><div style="color:#aaa">Últimas '+a.length+' movimentação(ões)</div></div><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
+        (!a.length?'<div class="notice">Nenhuma movimentação de estoque registrada.</div>':
+        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">'+
+          '<thead><tr><th style="text-align:left;padding:10px">Data / hora</th><th style="text-align:left;padding:10px">Produto</th><th style="text-align:left;padding:10px">Movimento</th><th style="text-align:right;padding:10px">Qtd.</th><th style="text-align:center;padding:10px">Estoque</th><th style="text-align:left;padding:10px">Observação</th></tr></thead><tbody>'+
+          a.map(m=>{
+            const d=new Date(m.created_at);
+            const dt=isNaN(d)?'':d.toLocaleString('pt-BR');
+            const type=String(m.movement_type||'');
+            const plus=(type==='Entrada'||type==='Cancelamento');
+            const sign=plus?'+':(type==='Venda'||type==='Reativação'?'-':'');
+            return '<tr style="border-top:1px solid #333">'+
+              '<td style="padding:10px;white-space:nowrap">'+E(dt)+'</td>'+
+              '<td style="padding:10px"><b>'+E(m.emoji||'📦')+' '+E(m.product_name||'Produto removido')+'</b></td>'+
+              '<td style="padding:10px"><b style="color:#ffd34d">'+E(type)+'</b></td>'+
+              '<td style="padding:10px;text-align:right;font-weight:900">'+sign+Number(m.quantity||0)+'</td>'+
+              '<td style="padding:10px;text-align:center;white-space:nowrap">'+Number(m.previous_quantity||0)+' → <b>'+Number(m.new_quantity||0)+'</b></td>'+
+              '<td style="padding:10px;color:#bbb">'+E(m.note||'—')+'</td>'+
+            '</tr>';
+          }).join('')+'</tbody></table></div>')+
       '</div>';
   }catch(e){alert(e.message)}
 }
