@@ -530,13 +530,14 @@ async function productForm(id){
     const products=await api("/api/admin/products");
     const cats=await api("/api/admin/categories");
     const p=id?products.find(x=>x.id===id):{
-      name:"",description:"",price:"",category_id:cats[0]?.id||1,emoji:"🍽️",image:"",stock_quantity:0,stock_control:false
+      name:"",description:"",price:"",cost_price:0,category_id:cats[0]?.id||1,emoji:"🍽️",image:"",stock_quantity:0,stock_control:false
     };
 
     modal(
       '<h2>'+(id?'Editar produto':'Novo produto')+'</h2>'+
       '<div class="field"><label>Nome</label><input id="pn" value="'+E(p.name)+'"></div>'+
       '<div class="field"><label>Preço</label><input id="pp" type="number" step=".01" value="'+p.price+'"></div>'+
+      '<div class="field"><label>💰 Custo de compra (somente Admin)</label><input id="pcost" type="number" min="0" step=".01" value="'+Number(p.cost_price||0)+'"></div>'+
       '<div class="field"><label>Categoria</label><select id="pc">'+
         cats.map(c=>'<option value="'+c.id+'" '+(c.id===p.category_id?"selected":"")+'>'+E(c.name)+'</option>').join("")+
       '</select></div>'+
@@ -557,6 +558,7 @@ async function saveProduct(id){
       name:$("pn").value,
       description:$("pd").value,
       price:Number($("pp").value),
+      cost_price:Math.max(0,Number($("pcost").value)||0),
       category_id:Number($("pc").value),
       emoji:$("pe").value||"🍽️",
       image:$("pi").value||"",
