@@ -84,6 +84,22 @@ textarea{min-height:88px}
   .cashSummary{grid-template-columns:1fr 1fr}
 }
 
+
+.reportFilters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:16px}
+.reportFilters .field{margin:0;min-width:180px}
+.reportSummary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:12px 0 18px}
+.reportBox{background:#101010;border:1px solid #403200;border-radius:12px;padding:13px}
+.reportBox small{display:block;color:#aaa}
+.reportBox strong{display:block;color:#ffd34d;font-size:20px;margin-top:5px}
+.reportTable{width:100%;border-collapse:collapse}
+.reportTable th,.reportTable td{padding:10px 8px;border-bottom:1px solid #2a2a2a;text-align:left}
+.reportTable th{color:#ffd34d;font-size:13px}
+.reportSection{margin-top:20px}
+@media(max-width:760px){
+  .reportSummary{grid-template-columns:1fr 1fr}
+  .reportTable{font-size:13px}
+}
+
 </style>
 </head>
 <body>
@@ -274,6 +290,7 @@ async function dashboard(){
         '<button onclick="accounts()">🪑 Comandas</button>'+
         '<button onclick="cash()">💰 Caixa</button>'+
         '<button onclick="salesHistory()">📊 Histórico</button>'+
+        '<button onclick="dailyReport()">📅 Relatório</button>'+
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
@@ -580,6 +597,88 @@ async function salesHistory(){
       '<div class="cashSummary"><div class="cashBox"><small>Total</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div><div class="cashBox"><small>Dinheiro</small><strong>'+R(totals.Dinheiro)+'</strong></div><div class="cashBox"><small>Cartão</small><strong>'+R(totals["Cartão"])+'</strong></div></div>'+ 
       (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>Mesa '+x.table_number+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
   }catch(e){alert(e.message)}
+}
+
+
+function todayLocal(){
+  const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+
+async function dailyReport(date){
+  try{
+    const chosen=date||todayLocal();
+    const r=await api("/api/reports/daily?date="+encodeURIComponent(chosen));
+    window.__dailyReport=r;
+
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><h2>📅 Relatório diário</h2><button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div>'+
+        '<div class="reportFilters">'+
+          '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
+          '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
+          '<button class="secondary" onclick="dailyReport(todayLocal())">Hoje</button>'+
+        '</div>'+
+        '<div class="reportSummary">'+
+          '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
+          '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
+          '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
+        '</div>'+
+        '<div class="reportSection"><h3>Contas fechadas</h3>'+
+          (r.accounts.length?
+            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
+            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            '</tbody></table></div>'
+          :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
+        '</div>'+
+        '<div class="reportSection"><h3>Produtos vendidos</h3>'+
+          (r.products.length?
+            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Total</th></tr></thead><tbody>'+
+            r.products.map(p=>'<tr><td>'+E(p.name)+'</td><td>'+p.quantity+'</td><td>'+R(p.total)+'</td></tr>').join("")+
+            '</tbody></table></div>'
+          :'<div class="empty">Nenhum produto vendido nesta data.</div>')+
+        '</div>'+
+        '<div class="reportSection"><h3>Fechamentos de caixa</h3>'+
+          (r.cash.length?
+            r.cash.map(c=>'<div class="saleRow"><div><b>Caixa #'+c.id+'</b><div style="color:#aaa">'+new Date(c.opened_at).toLocaleString("pt-BR")+' → '+new Date(c.closed_at).toLocaleString("pt-BR")+'</div></div><div><b>'+R(c.closing_amount)+'</b><div style="color:#aaa">Esperado: '+R(c.expected_amount)+'</div></div></div>').join("")
+          :'<div class="empty">Nenhum fechamento de caixa nesta data.</div>')+
+        '</div>'+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
+
+function exportDailyCSV(){
+  const r=window.__dailyReport;
+  if(!r){alert("Abra um relatório primeiro.");return}
+
+  const rows=[
+    ["Relatório diário",r.date],[],
+    ["Resumo"],
+    ["Total",r.summary.total],
+    ["PIX",r.summary.pix],
+    ["Dinheiro",r.summary.dinheiro],
+    ["Cartão",r.summary.cartao],
+    ["Contas",r.summary.contas],[],
+    ["Contas fechadas"],
+    ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
+    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method||"",a.order_count,a.total]),[],
+    ["Produtos vendidos"],
+    ["Produto","Quantidade","Total"],
+    ...r.products.map(p=>[p.name,p.quantity,p.total])
+  ];
+
+  const csv=rows.map(row=>row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(";")).join("\n");
+  const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="relatorio-"+r.date+".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function qrs(){
