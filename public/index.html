@@ -100,6 +100,66 @@ textarea{min-height:88px}
   .reportTable{font-size:13px}
 }
 
+
+.printHeader{display:none}
+@media print{
+  @page{size:A4;margin:12mm}
+  body{background:#fff!important;color:#111!important;font-family:Arial,Helvetica,sans-serif!important}
+  .top,.stats,.tabs,.cart,.modal,.noPrint{display:none!important}
+  .wrap{max-width:none!important;margin:0!important;padding:0!important}
+  #app{display:block!important}
+  #adminContent{display:block!important}
+  .panel{
+    background:#fff!important;
+    color:#111!important;
+    border:0!important;
+    box-shadow:none!important;
+    padding:0!important;
+    margin:0!important;
+  }
+  .printHeader{
+    display:block!important;
+    border-bottom:3px solid #b8860b;
+    margin-bottom:16px;
+    padding-bottom:10px;
+  }
+  .printHeader h1{margin:0;color:#111!important;font-size:24px}
+  .printHeader p{margin:4px 0 0;color:#555!important}
+  .reportFilters,.row>button{display:none!important}
+  .reportSummary{
+    display:grid!important;
+    grid-template-columns:repeat(3,1fr)!important;
+    gap:8px!important;
+    margin:10px 0 16px!important;
+  }
+  .reportBox{
+    background:#fff!important;
+    color:#111!important;
+    border:1px solid #999!important;
+    break-inside:avoid;
+    padding:10px!important;
+  }
+  .reportBox small{color:#555!important}
+  .reportBox strong{color:#111!important}
+  .reportSection{break-inside:auto;margin-top:16px!important}
+  .reportSection h3{color:#111!important;border-bottom:1px solid #aaa;padding-bottom:5px}
+  .reportTable{width:100%!important;border-collapse:collapse!important;color:#111!important}
+  .reportTable th,.reportTable td{
+    color:#111!important;
+    border-bottom:1px solid #ccc!important;
+    padding:7px 5px!important;
+    font-size:11px!important;
+  }
+  .reportTable th{background:#eee!important}
+  .accountCard,.saleRow{
+    background:#fff!important;
+    color:#111!important;
+    border:1px solid #aaa!important;
+    break-inside:avoid;
+  }
+  a{color:#111!important;text-decoration:none!important}
+}
+
 </style>
 </head>
 <body>
@@ -618,7 +678,8 @@ async function periodReport(start,end){
 
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><h2>📆 Relatório por período</h2><button class="secondary" onclick="exportPeriodCSV()">Exportar CSV</button></div>'+
+        '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório por período - '+new Date(first+'T12:00:00').toLocaleDateString("pt-BR")+' a '+new Date(last+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
+        '<div class="row"><h2>📆 Relatório por período</h2><div class="noPrint"><button class="secondary" onclick="printPeriodReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportPeriodCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data inicial</label><input id="periodStart" type="date" value="'+E(first)+'"></div>'+
           '<div class="field"><label>Data final</label><input id="periodEnd" type="date" value="'+E(last)+'"></div>'+
@@ -693,7 +754,8 @@ async function dailyReport(date){
 
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><h2>📅 Relatório diário</h2><button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div>'+
+        '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório diário - '+new Date(chosen+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
+        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="secondary" onclick="printDailyReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
           '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
@@ -727,6 +789,23 @@ async function dailyReport(date){
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
+}
+
+
+function printDailyReport(){
+  if(!window.__dailyReport){
+    alert("Abra primeiro o relatório diário.");
+    return;
+  }
+  window.print();
+}
+
+function printPeriodReport(){
+  if(!window.__periodReport){
+    alert("Abra primeiro o relatório por período.");
+    return;
+  }
+  window.print();
 }
 
 function exportDailyCSV(){
