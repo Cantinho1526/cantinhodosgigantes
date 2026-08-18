@@ -259,9 +259,16 @@ app.post("/api/orders",async(req,res)=>{
         [order.id,x.p.id,x.p.name,x.quantity,x.price]
       );
       if(x.p.stock_control){
+        const previous=Number(x.p.stock_quantity||0);
+        const next=previous-x.quantity;
         await c.query(
-          "update products set stock_quantity=stock_quantity-$1 where id=$2",
-          [x.quantity,x.p.id]
+          "update products set stock_quantity=$1 where id=$2",
+          [next,x.p.id]
+        );
+        await c.query(
+          `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+           values($1,'Venda',$2,$3,$4,$5)`,
+          [x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • Mesa '+tableNumber]
         );
       }
     }
@@ -298,11 +305,36 @@ app.get("/api/stock",requireAdmin,async(req,res)=>{
 app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
   const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
   const control=Boolean(req.body.stock_control);
+  const c=await pool.connect();
   try{
-    const r=await pool.query("update products set stock_quantity=$1,stock_control=$2 where id=$3 and active=true returning id,name,stock_quantity,stock_control",[quantity,control,Number(req.params.id)]);
-    if(!r.rowCount)return res.status(404).json({error:"Produto não encontrado."});
+    await c.query("begin");
+    const cur=await c.query("select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(req.params.id)]);
+    if(!cur.rowCount){await c.query("rollback");return res.status(404).json({error:"Produto não encontrado."});}
+    const previous=Number(cur.rows[0].stock_quantity||0);
+    const r=await c.query("update products set stock_quantity=$1,stock_control=$2 where id=$3 returning id,name,stock_quantity,stock_control",[quantity,control,Number(req.params.id)]);
+    if(previous!==quantity){
+      await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+        values($1,'Ajuste manual',$2,$3,$4,'Correção manual de estoque')`,
+        [Number(req.params.id),Math.abs(quantity-previous),previous,quantity]);
+    }
+    await c.query("commit");
     res.json(r.rows[0]);
-  }catch(e){res.status(500).json({error:"Erro ao atualizar estoque."})}
+  }catch(e){await c.query("rollback");res.status(500).json({error:"Erro ao atualizar estoque."})}
+  finally{c.release()}
+});
+
+app.get("/api/stock/history",requireAdmin,async(req,res)=>{
+  try{
+    const rows=(await pool.query(`
+      select sm.id,sm.product_id,p.name product_name,p.emoji,sm.movement_type,sm.quantity,
+             sm.previous_quantity,sm.new_quantity,sm.note,sm.created_at
+      from stock_movements sm
+      left join products p on p.id=sm.product_id
+      order by sm.created_at desc,sm.id desc
+      limit 300
+    `)).rows;
+    res.json(rows);
+  }catch(e){res.status(500).json({error:"Erro ao carregar histórico de estoque."})}
 });
 
 
@@ -382,14 +414,25 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
     if(!current){await c.query("rollback");return res.status(404).json({error:"Pedido não encontrado."});}
     const next=req.body.status;
     if(current.status!=="Cancelado" && next==="Cancelado"){
-      await c.query(`update products p set stock_quantity=p.stock_quantity+oi.quantity
-        from order_items oi where oi.order_id=$1 and oi.product_id=p.id and p.stock_control=true`,[id]);
+      const items=(await c.query(`select p.id,p.name,p.stock_quantity,oi.quantity from order_items oi
+        join products p on p.id=oi.product_id where oi.order_id=$1 and p.stock_control=true for update`,[id])).rows;
+      for(const x of items){
+        const previous=Number(x.stock_quantity||0), q=Number(x.quantity||0), updated=previous+q;
+        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
+        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+          values($1,'Cancelamento',$2,$3,$4,$5)`,[x.id,q,previous,updated,'Devolução do pedido #'+id]);
+      }
     }else if(current.status==="Cancelado" && next!=="Cancelado"){
       const items=(await c.query(`select p.id,p.name,p.stock_quantity,oi.quantity from order_items oi
         join products p on p.id=oi.product_id where oi.order_id=$1 and p.stock_control=true for update`,[id])).rows;
-      for(const x of items){if(Number(x.stock_quantity)<Number(x.quantity))throw Error(`Estoque insuficiente para ${x.name}.`);}
-      await c.query(`update products p set stock_quantity=p.stock_quantity-oi.quantity
-        from order_items oi where oi.order_id=$1 and oi.product_id=p.id and p.stock_control=true`,[id]);
+      for(const x of items){
+        const previous=Number(x.stock_quantity||0), q=Number(x.quantity||0);
+        if(previous<q)throw Error(`Estoque insuficiente para ${x.name}.`);
+        const updated=previous-q;
+        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
+        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+          values($1,'Reativação',$2,$3,$4,$5)`,[x.id,q,previous,updated,'Pedido #'+id+' reativado']);
+      }
     }
     await c.query("update orders set status=$1 where id=$2",[next,id]);
     await c.query("commit");
