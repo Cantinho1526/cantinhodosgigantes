@@ -512,15 +512,27 @@ async function products(){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
-        a.map(p=>
-          '<div class="productRow">'+
-            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+' • '+R(p.price)+'</div></div>'+
+        a.map(p=>{
+          const price=Number(p.price||0);
+          const cost=Number(p.cost_price||0);
+          const profit=price-cost;
+          const margin=price>0?(profit/price)*100:0;
+          return '<div class="productRow">'+
+            '<div>'+
+              '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
+              '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
+              '<div style="font-size:13px;margin-top:4px">'+
+                '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
+                '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
+                '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
+              '</div>'+
+            '</div>'+
             '<div class="productActions">'+
               '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
               '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
             '</div>'+
-          '</div>'
-        ).join("")+
+          '</div>';
+        }).join("")+
       '</div>';
   }catch(e){alert(e.message)}
 }
