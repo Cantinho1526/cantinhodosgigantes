@@ -760,6 +760,10 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
       from table_accounts a
       left join orders o on o.account_id=a.id
       group by a.id
+      having not (
+        a.status='Aberta'
+        and count(o.id) filter(where o.status<>'Cancelado')=0
+      )
       order by
         case when a.status='Aberta' then 0 else 1 end,
         a.table_number,
@@ -1046,6 +1050,7 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
         left join orders o on o.account_id=a.id
         where a.status='Aberta'
         group by a.id
+        having count(o.id) filter(where o.status<>'Cancelado')>0
       ) x
     `)).rows[0];
     const paid=Number((await pool.query(`
