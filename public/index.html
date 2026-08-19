@@ -59,6 +59,7 @@ textarea{min-height:88px}
 .qrCard img{width:180px;max-width:100%}.qrCard h3{margin:4px 0 10px}.qrCard p{font-size:12px;word-break:break-all}
 .empty{color:#aaa;text-align:center;padding:30px}
 .notice{background:#211a00;border:1px solid #6a5200;color:#ffe08a;padding:10px 12px;border-radius:10px;margin-bottom:12px}
+.clientActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.pixQr{display:block;width:min(280px,100%);margin:14px auto;background:#fff;padding:10px;border-radius:12px}.pixCode{font-size:12px;word-break:break-all;background:#090909;border:1px solid #333;border-radius:10px;padding:10px;color:#ddd;max-height:110px;overflow:auto}
 @media(max-width:760px){
   .hero h1{font-size:30px}.stats{grid-template-columns:1fr 1fr}.productRow{align-items:flex-start;flex-direction:column}.wrap{padding:13px}.top{padding:10px}.brand{font-size:14px}.topActions button{padding:8px 10px}
 }
@@ -225,6 +226,7 @@ async function client(){
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
       (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':'')+
+      (mesa && new URLSearchParams(location.search).get("t")?'<div class="clientActions"><button class="secondary" onclick="myAccount()">🧾 Minha comanda</button></div>':'')+
     '</section>'+
     '<div class="tabs">'+
       ["Todos",...M.categories.map(x=>x.name)].map(c=>
@@ -310,9 +312,48 @@ async function sendOrder(mesa){
         '<div style="font-size:56px">✅</div>'+
         '<h2>Pedido enviado!</h2>'+
         '<p>Pedido <b>#'+r.id+'</b> — Mesa '+mesa+'</p>'+
-        '<button class="btn" onclick="closeModal()">OK</button>'+
+        '<button class="btn" onclick="myAccount()">Ver minha comanda</button> '+
+        '<button class="secondary" onclick="closeModal()">OK</button>'+
       '</div>'
     );
+  }catch(e){alert(e.message)}
+}
+
+async function myAccount(){
+  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t");
+  if(!mesa||!token){alert("Abra o cardápio pelo QR Code da sua mesa.");return}
+  try{
+    const d=await api("/api/client/account/"+encodeURIComponent(mesa)+"?t="+encodeURIComponent(token));
+    if(!d.open){modal('<h2>🧾 Minha comanda</h2><div class="empty">Ainda não há pedidos nesta mesa.</div><button class="secondary" onclick="closeModal()">Voltar</button>');return}
+    const orders=d.orders.filter(o=>o.status!=="Cancelado");
+    modal('<h2>🧾 Minha comanda — Mesa '+E(mesa)+'</h2>'+orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b>'+o.items.map(i=>'<div class="row"><span>'+i.quantity+'x '+E(i.name)+'</span><span>'+R(Number(i.unit_price)*i.quantity)+'</span></div>').join('')+'</div>').join('')+'<h2 style="margin-top:16px">Total: '+R(d.total)+'</h2><div class="notice">O pagamento abaixo é somente por PIX.</div><button class="btn" onclick="askPix()">💠 Pagar com PIX</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
+  }catch(e){alert(e.message)}
+}
+
+function askPix(){
+  modal('<h2>💠 Pagar com PIX</h2><div class="notice">Informe seu e-mail para gerar o QR Code Pix da comanda.</div><div class="field"><label>E-mail</label><input id="pixEmail" type="email" autocomplete="email" placeholder="seuemail@exemplo.com"></div><button class="btn" onclick="createPix()">Gerar PIX</button> <button class="secondary" onclick="myAccount()">Voltar</button>');
+}
+
+async function createPix(){
+  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t"),email=$("pixEmail").value.trim();
+  try{
+    const d=await api("/api/client/pix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:Number(mesa),token,email})});
+    const img=d.qr_code_base64?'<img class="pixQr" alt="QR Code Pix" src="data:image/png;base64,'+E(d.qr_code_base64)+'">':'';
+    modal('<div style="text-align:center"><h2>💠 PIX — '+R(d.amount)+'</h2><p>Escaneie o QR Code ou use o Pix Copia e Cola.</p>'+img+'<div id="pixCode" class="pixCode">'+E(d.qr_code)+'</div><div class="clientActions" style="justify-content:center"><button class="btn" onclick="copyPix()">📋 Copiar código PIX</button><button class="secondary" onclick="checkPix('+Number(d.payment_id)+')">🔄 Verificar pagamento</button></div><p style="color:#aaa;font-size:12px">Ambiente de teste enquanto configuramos a integração.</p><button class="secondary" onclick="closeModal()">Fechar</button></div>');
+  }catch(e){alert(e.message)}
+}
+
+async function copyPix(){
+  const code=$("pixCode").textContent;
+  try{await navigator.clipboard.writeText(code);alert("Código PIX copiado!")}catch(e){alert("Não foi possível copiar automaticamente. Selecione o código e copie manualmente.")}
+}
+
+async function checkPix(id){
+  const token=new URLSearchParams(location.search).get("t");
+  try{
+    const d=await api("/api/client/pix/"+id+"/status?t="+encodeURIComponent(token));
+    if(d.paid)modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago.</p><button class="btn" onclick="closeModal()">OK</button></div>');
+    else alert("Pagamento ainda não confirmado. Status: "+d.status);
   }catch(e){alert(e.message)}
 }
 
