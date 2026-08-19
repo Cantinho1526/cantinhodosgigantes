@@ -7,6 +7,8 @@ const QRCode=require("qrcode");
 const app=express();
 const PORT=process.env.PORT||3000;
 const ADMIN_PIN=process.env.ADMIN_PIN||"1234";
+const MP_ACCESS_TOKEN=process.env.MP_ACCESS_TOKEN||"";
+const TABLE_QR_SECRET=process.env.TABLE_QR_SECRET||ADMIN_PIN;
 
 if(!process.env.DATABASE_URL){
   console.error("DATABASE_URL ausente");
@@ -139,7 +141,24 @@ async function init(){
 
     CREATE INDEX IF NOT EXISTS idx_orders_account_id ON orders(account_id);
     CREATE INDEX IF NOT EXISTS idx_accounts_table_status ON table_accounts(table_number,status);
+    CREATE TABLE IF NOT EXISTS pix_payments(
+      id serial primary key,
+      account_id int references table_accounts(id),
+      table_number int not null,
+      mp_order_id text unique,
+      external_reference text unique not null,
+      amount numeric(10,2) not null,
+      status text not null default 'pending',
+      payer_email text not null,
+      qr_code text default '',
+      qr_code_base64 text default '',
+      ticket_url text default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
   `);
 
   await pool.query(`
@@ -164,6 +183,36 @@ function requireAdmin(req,res,next){
     });
   }
   next();
+}
+
+function tableAccessToken(tableNumber){
+  return crypto.createHmac("sha256",TABLE_QR_SECRET).update(String(tableNumber)).digest("hex").slice(0,32);
+}
+
+function validTableAccess(tableNumber,token){
+  const expected=tableAccessToken(tableNumber);
+  const a=Buffer.from(String(token||""));
+  const b=Buffer.from(expected);
+  return a.length===b.length && crypto.timingSafeEqual(a,b);
+}
+
+async function mercadoPago(pathname,options={}){
+  if(!MP_ACCESS_TOKEN)throw Error("PIX ainda não foi configurado no servidor.");
+  const r=await fetch("https://api.mercadopago.com"+pathname,{
+    ...options,
+    headers:{
+      "Accept":"application/json",
+      "Content-Type":"application/json",
+      "Authorization":"Bearer "+MP_ACCESS_TOKEN,
+      ...(options.headers||{})
+    }
+  });
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){
+    console.error("Mercado Pago",r.status,data);
+    throw Error(data.message||data.error||"Não foi possível gerar o Pix.");
+  }
+  return data;
 }
 
 async function getOrCreateOpenAccount(client,tableNumber){
@@ -444,6 +493,74 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   finally{c.release()}
 });
 
+app.get("/api/client/account/:table",async(req,res)=>{
+  try{
+    const tableNumber=Number(req.params.table);
+    if(!Number.isInteger(tableNumber)||!validTableAccess(tableNumber,req.query.t)){
+      return res.status(403).json({error:"Acesso inválido à comanda."});
+    }
+    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,[tableNumber])).rows[0];
+    if(!account)return res.json({open:false,table_number:tableNumber,orders:[],total:0});
+    const orders=(await pool.query(`select id,status,observation,total,created_at from orders where account_id=$1 order by id`,[account.id])).rows;
+    let total=0;
+    for(const o of orders){
+      o.items=(await pool.query(`select product_name name,quantity,unit_price from order_items where order_id=$1 order by id`,[o.id])).rows;
+      if(o.status!=="Cancelado")total+=Number(o.total);
+    }
+    res.json({open:true,account:{id:account.id,table_number:account.table_number},orders,total});
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar sua comanda."})}
+});
+
+app.post("/api/client/pix",async(req,res)=>{
+  const tableNumber=Number(req.body.table);
+  const token=String(req.body.token||"");
+  const email=String(req.body.email||"").trim().toLowerCase();
+  if(!Number.isInteger(tableNumber)||!validTableAccess(tableNumber,token))return res.status(403).json({error:"Acesso inválido à comanda."});
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).json({error:"Informe um e-mail válido para gerar o Pix."});
+  try{
+    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,[tableNumber])).rows[0];
+    if(!account)return res.status(404).json({error:"Não há comanda aberta nesta mesa."});
+    const total=Number((await pool.query(`select coalesce(sum(total),0)::numeric total from orders where account_id=$1 and status<>'Cancelado'`,[account.id])).rows[0].total);
+    if(total<=0)return res.status(400).json({error:"A comanda não possui valor para pagamento."});
+
+    const previous=(await pool.query(`select * from pix_payments where account_id=$1 and status='pending' order by id desc limit 1`,[account.id])).rows[0];
+    if(previous && Number(previous.amount)===total && previous.qr_code){
+      return res.json({ok:true,payment_id:previous.id,amount:total,qr_code:previous.qr_code,qr_code_base64:previous.qr_code_base64,ticket_url:previous.ticket_url,status:previous.status});
+    }
+
+    const externalReference=`cantinho_${account.id}_${Date.now()}`;
+    const data=await mercadoPago("/v1/orders",{
+      method:"POST",
+      headers:{"X-Idempotency-Key":crypto.randomUUID()},
+      body:JSON.stringify({
+        type:"online",
+        total_amount:total.toFixed(2),
+        external_reference:externalReference,
+        processing_mode:"automatic",
+        transactions:{payments:[{amount:total.toFixed(2),payment_method:{id:"pix",type:"bank_transfer"},expiration_time:"PT30M"}]},
+        payer:{email}
+      })
+    });
+    const payment=data?.transactions?.payments?.[0]||{};
+    const method=payment.payment_method||{};
+    const saved=(await pool.query(`insert into pix_payments(account_id,table_number,mp_order_id,external_reference,amount,status,payer_email,qr_code,qr_code_base64,ticket_url) values($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9) returning id`,[account.id,tableNumber,data.id,externalReference,total,email,method.qr_code||"",method.qr_code_base64||"",method.ticket_url||""])).rows[0];
+    res.json({ok:true,payment_id:saved.id,amount:total,qr_code:method.qr_code||"",qr_code_base64:method.qr_code_base64||"",ticket_url:method.ticket_url||"",status:payment.status||data.status||"pending"});
+  }catch(e){console.error(e);res.status(400).json({error:e.message||"Não foi possível gerar o Pix."})}
+});
+
+app.get("/api/client/pix/:id/status",async(req,res)=>{
+  try{
+    const p=(await pool.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
+    if(!p||!validTableAccess(p.table_number,req.query.t))return res.status(404).json({error:"Pagamento não encontrado."});
+    const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
+    const payment=data?.transactions?.payments?.[0]||{};
+    const rawStatus=String(payment.status||data.status||"");
+    const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
+    await pool.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus||"pending",p.id]);
+    res.json({ok:true,paid,status:rawStatus||"pending"});
+  }catch(e){console.error(e);res.status(400).json({error:e.message||"Erro ao consultar o Pix."})}
+});
+
 app.get("/api/accounts",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
@@ -611,7 +728,8 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
 
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
   try{
-    const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(req.params.table)}`;
+    const tableNumber=Number(req.params.table);
+    const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(tableNumber)}&t=${tableAccessToken(tableNumber)}`;
     const png=await QRCode.toDataURL(url,{width:700,margin:2});
     res.json({url,png});
   }catch(e){res.status(500).json({error:"Erro ao gerar QR Code."})}
