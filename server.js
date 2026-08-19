@@ -514,13 +514,13 @@ app.get("/api/client/account/:table",async(req,res)=>{
 app.post("/api/client/pix",async(req,res)=>{
   const tableNumber=Number(req.body.table);
   const token=String(req.body.token||"");
-  const email=String(req.body.email||"").trim().toLowerCase();
+  // O cliente não precisa informar e-mail para pagar com PIX.
+  // O Mercado Pago exige payer.email na criação da order, então usamos
+  // um e-mail técnico interno que não aparece para o cliente.
+  const email="pix@cantinhodosgigantes.com";
 
   if(!Number.isInteger(tableNumber)||tableNumber<1||!validTableAccess(tableNumber,token)){
     return res.status(403).json({error:"Acesso inválido à comanda."});
-  }
-  if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){
-    return res.status(400).json({error:"Informe um e-mail válido para gerar o Pix."});
   }
 
   try{
