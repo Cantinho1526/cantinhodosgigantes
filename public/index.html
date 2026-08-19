@@ -333,19 +333,17 @@ async function myAccount(){
 function askPix(){
   modal('<h2>💠 Pagar com PIX</h2>'+ 
     '<div class="notice">O QR Code será gerado com o <b>valor exato da sua comanda</b>.</div>'+ 
-    '<div class="field"><label>E-mail</label><input id="pixEmail" type="email" autocomplete="email" placeholder="seuemail@exemplo.com"></div>'+ 
     '<button class="btn" onclick="createPix()">Gerar PIX</button> '+
     '<button class="secondary" onclick="myAccount()">Voltar</button>');
 }
 
 async function createPix(){
-  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t"),email=$("pixEmail").value.trim();
-  if(!email){alert("Informe seu e-mail para gerar o Pix.");return}
+  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t");
   try{
     const d=await api("/api/client/pix",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({table:Number(mesa),token,email})
+      body:JSON.stringify({table:Number(mesa),token})
     });
     const img=d.qr_code_base64?'<img class="pixQr" alt="QR Code Pix" src="data:image/png;base64,'+E(d.qr_code_base64)+'">':'';
     modal('<div style="text-align:center">'+
