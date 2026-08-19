@@ -613,16 +613,72 @@ app.post("/api/client/pix",async(req,res)=>{
 });
 
 app.get("/api/client/pix/:id/status",async(req,res)=>{
+  const c=await pool.connect();
   try{
-    const p=(await pool.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
-    if(!p||!validTableAccess(p.table_number,req.query.t))return res.status(404).json({error:"Pagamento não encontrado."});
+    const p=(await c.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
+    if(!p||!validTableAccess(p.table_number,req.query.t)){
+      return res.status(404).json({error:"Pagamento não encontrado."});
+    }
+
     const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
     const payment=data?.transactions?.payments?.[0]||{};
     const rawStatus=String(payment.status||data.status||"");
     const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
-    await pool.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus||"pending",p.id]);
-    res.json({ok:true,paid,status:rawStatus||"pending"});
-  }catch(e){console.error(e);res.status(400).json({error:e.message||"Erro ao consultar o Pix."})}
+
+    if(!paid){
+      await c.query(
+        `update pix_payments set status=$1,updated_at=now() where id=$2`,
+        [rawStatus||"pending",p.id]
+      );
+      return res.json({ok:true,paid:false,status:rawStatus||"pending",account_closed:false});
+    }
+
+    // Confirmação PIX e fechamento da comanda acontecem juntos.
+    // A transação e o bloqueio evitam fechar/cobrar a mesma comanda duas vezes.
+    await c.query("begin");
+
+    const lockedPayment=(await c.query(
+      `select * from pix_payments where id=$1 for update`,
+      [p.id]
+    )).rows[0];
+
+    await c.query(
+      `update pix_payments set status='paid',updated_at=now() where id=$1`,
+      [lockedPayment.id]
+    );
+
+    const account=(await c.query(
+      `select * from table_accounts where id=$1 for update`,
+      [lockedPayment.account_id]
+    )).rows[0];
+
+    let accountClosed=false;
+    if(account && account.status==='Aberta'){
+      await c.query(`
+        update table_accounts
+        set status='Fechada',payment_method='PIX',closed_at=now()
+        where id=$1
+      `,[account.id]);
+      accountClosed=true;
+    }
+
+    await c.query("commit");
+
+    res.json({
+      ok:true,
+      paid:true,
+      status:rawStatus||"paid",
+      account_closed:accountClosed || account?.status==='Fechada',
+      table_number:lockedPayment.table_number,
+      amount:Number(lockedPayment.amount)
+    });
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(400).json({error:e.message||"Erro ao consultar o Pix."});
+  }finally{
+    c.release();
+  }
 });
 
 app.get("/api/accounts",requireAdmin,async(req,res)=>{
