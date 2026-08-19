@@ -215,6 +215,91 @@ async function mercadoPago(pathname,options={}){
   return data;
 }
 
+
+async function reconcilePaidPixAccounts(){
+  // Procura pagamentos PIX ligados a comandas que ainda constam como abertas.
+  // O Mercado Pago é a fonte de verdade: só fecha a comanda se a order estiver realmente paga.
+  const rows=(await pool.query(`
+    select pp.id,pp.account_id,pp.table_number,pp.mp_order_id,pp.amount,pp.status
+    from pix_payments pp
+    join table_accounts a on a.id=pp.account_id
+    where a.status='Aberta'
+      and pp.mp_order_id is not null
+    order by pp.id desc
+    limit 30
+  `)).rows;
+
+  let closed=0;
+
+  for(const p of rows){
+    try{
+      const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
+      const payment=data?.transactions?.payments?.[0]||{};
+      const rawStatus=String(payment.status||data.status||"").toLowerCase();
+      const paid=["processed","approved","paid"].includes(rawStatus);
+
+      if(!paid){
+        await pool.query(
+          `update pix_payments set status=$1,updated_at=now() where id=$2`,
+          [rawStatus||"pending",p.id]
+        );
+        continue;
+      }
+
+      const c=await pool.connect();
+      try{
+        await c.query("begin");
+
+        const account=(await c.query(
+          `select * from table_accounts where id=$1 for update`,
+          [p.account_id]
+        )).rows[0];
+
+        await c.query(
+          `update pix_payments set status='paid',updated_at=now() where id=$1`,
+          [p.id]
+        );
+
+        if(account && account.status==='Aberta'){
+          // Confere o total da própria comanda vinculada ao PIX.
+          const total=Number((await c.query(`
+            select coalesce(sum(total),0)::numeric total
+            from orders
+            where account_id=$1 and status<>'Cancelado'
+          `,[account.id])).rows[0].total);
+
+          // Só fecha se o valor pago corresponde ao valor da comanda.
+          if(Math.abs(total-Number(p.amount))<0.01){
+            await c.query(`
+              update table_accounts
+              set status='Fechada',payment_method='PIX',closed_at=now()
+              where id=$1
+            `,[account.id]);
+            closed++;
+          }else{
+            console.error(
+              "PIX pago com valor diferente da comanda:",
+              {pix_id:p.id,account_id:p.account_id,pago:Number(p.amount),comanda:total}
+            );
+          }
+        }
+
+        await c.query("commit");
+      }catch(e){
+        try{await c.query("rollback")}catch(_e){}
+        throw e;
+      }finally{
+        c.release();
+      }
+    }catch(e){
+      // Um PIX antigo/de teste inválido não deve impedir a reconciliação dos demais.
+      console.error("Falha ao reconciliar PIX",p.id,e.message||e);
+    }
+  }
+
+  return {checked:rows.length,closed};
+}
+
 async function getOrCreateOpenAccount(client,tableNumber){
   let r=await client.query(
     `select * from table_accounts
@@ -613,9 +698,8 @@ app.post("/api/client/pix",async(req,res)=>{
 });
 
 app.get("/api/client/pix/:id/status",async(req,res)=>{
-  const c=await pool.connect();
   try{
-    const p=(await c.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
+    const p=(await pool.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
     if(!p||!validTableAccess(p.table_number,req.query.t)){
       return res.status(404).json({error:"Pagamento não encontrado."});
     }
@@ -626,58 +710,43 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
     const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
 
     if(!paid){
-      await c.query(
+      await pool.query(
         `update pix_payments set status=$1,updated_at=now() where id=$2`,
         [rawStatus||"pending",p.id]
       );
       return res.json({ok:true,paid:false,status:rawStatus||"pending",account_closed:false});
     }
 
-    // Confirmação PIX e fechamento da comanda acontecem juntos.
-    // A transação e o bloqueio evitam fechar/cobrar a mesma comanda duas vezes.
-    await c.query("begin");
+    // Fecha exatamente a comanda vinculada a este pagamento já confirmado.
+    const result=await reconcilePaidPixAccounts();
 
-    const lockedPayment=(await c.query(
-      `select * from pix_payments where id=$1 for update`,
-      [p.id]
+    const account=(await pool.query(
+      `select status,payment_method,closed_at from table_accounts where id=$1`,
+      [p.account_id]
     )).rows[0];
-
-    await c.query(
-      `update pix_payments set status='paid',updated_at=now() where id=$1`,
-      [lockedPayment.id]
-    );
-
-    const account=(await c.query(
-      `select * from table_accounts where id=$1 for update`,
-      [lockedPayment.account_id]
-    )).rows[0];
-
-    let accountClosed=false;
-    if(account && account.status==='Aberta'){
-      await c.query(`
-        update table_accounts
-        set status='Fechada',payment_method='PIX',closed_at=now()
-        where id=$1
-      `,[account.id]);
-      accountClosed=true;
-    }
-
-    await c.query("commit");
 
     res.json({
       ok:true,
       paid:true,
       status:rawStatus||"paid",
-      account_closed:accountClosed || account?.status==='Fechada',
-      table_number:lockedPayment.table_number,
-      amount:Number(lockedPayment.amount)
+      account_closed:account?.status==="Fechada",
+      payment_method:account?.payment_method||null,
+      closed_at:account?.closed_at||null,
+      reconciled:result
     });
   }catch(e){
-    try{await c.query("rollback")}catch(_e){}
     console.error(e);
     res.status(400).json({error:e.message||"Erro ao consultar o Pix."});
-  }finally{
-    c.release();
+  }
+});
+
+app.post("/api/admin/pix/reconcile",requireAdmin,async(req,res)=>{
+  try{
+    const result=await reconcilePaidPixAccounts();
+    res.json({ok:true,...result});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao reconciliar pagamentos PIX."});
   }
 });
 
@@ -964,6 +1033,9 @@ app.get("/api/cash/history",requireAdmin,async(req,res)=>{
 
 app.get("/api/stats",requireAdmin,async(req,res)=>{
   try{
+    // Corrige automaticamente comandas PIX que já foram pagas no Mercado Pago,
+    // mas por algum motivo ainda ficaram abertas no banco.
+    await reconcilePaidPixAccounts();
     const orders=(await pool.query("select count(*)::int c from orders")).rows[0].c;
     const open=(await pool.query(`
       select count(*)::int c,
