@@ -514,8 +514,13 @@ app.get("/api/client/account/:table",async(req,res)=>{
 app.post("/api/client/pix",async(req,res)=>{
   const tableNumber=Number(req.body.table);
   const token=String(req.body.token||"");
+  const email=String(req.body.email||"").trim().toLowerCase();
+
   if(!Number.isInteger(tableNumber)||tableNumber<1||!validTableAccess(tableNumber,token)){
     return res.status(403).json({error:"Acesso inválido à comanda."});
+  }
+  if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){
+    return res.status(400).json({error:"Informe um e-mail válido para gerar o Pix."});
   }
 
   try{
@@ -535,31 +540,49 @@ app.post("/api/client/pix",async(req,res)=>{
 
     if(comandaTotal<=0)return res.status(400).json({error:"A comanda não possui valor para pagamento."});
 
-    // AMBIENTE DE TESTE MERCADO PAGO:
-    // A documentação oficial do teste Pix via Orders exige dados predefinidos.
-    // Este valor NÃO fecha a comanda e será removido quando passarmos para produção.
-    const testAmount=50.00;
-    const testEmail="test_user_br@testuser.com";
-    const externalReference=`cantinho_test_${account.id}_${Date.now()}`;
+    // Evita gerar vários PIX ativos para a mesma comanda e mesmo valor.
+    const existing=(await pool.query(
+      `select * from pix_payments
+       where account_id=$1 and amount=$2 and status in ('pending','action_required','processing')
+       order by id desc limit 1`,
+      [account.id,comandaTotal]
+    )).rows[0];
 
+    if(existing){
+      try{
+        const current=await mercadoPago("/v1/orders/"+encodeURIComponent(existing.mp_order_id));
+        const payment=current?.transactions?.payments?.[0]||{};
+        const method=payment.payment_method||{};
+        const rawStatus=String(payment.status||current.status||"pending");
+        const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
+        await pool.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus,existing.id]);
+        if(!paid && ["action_required","pending","processing"].includes(rawStatus.toLowerCase())){
+          return res.json({
+            ok:true,reused:true,payment_id:existing.id,amount:Number(existing.amount),
+            qr_code:method.qr_code||existing.qr_code||"",
+            qr_code_base64:method.qr_code_base64||existing.qr_code_base64||"",
+            ticket_url:method.ticket_url||existing.ticket_url||"",
+            status:rawStatus
+          });
+        }
+      }catch(_e){}
+    }
+
+    const externalReference=`cantinho_${account.id}_${Date.now()}`;
     const data=await mercadoPago("/v1/orders",{
       method:"POST",
       headers:{"X-Idempotency-Key":crypto.randomUUID()},
       body:JSON.stringify({
         type:"online",
         external_reference:externalReference,
-        total_amount:testAmount.toFixed(2),
-        payer:{
-          email:testEmail,
-          first_name:"APRO"
-        },
+        total_amount:comandaTotal.toFixed(2),
+        processing_mode:"automatic",
+        payer:{email},
         transactions:{
           payments:[{
-            amount:testAmount.toFixed(2),
-            payment_method:{
-              id:"pix",
-              type:"bank_transfer"
-            }
+            amount:comandaTotal.toFixed(2),
+            payment_method:{id:"pix",type:"bank_transfer"},
+            expiration_time:"PT30M"
           }]
         }
       })
@@ -567,30 +590,21 @@ app.post("/api/client/pix",async(req,res)=>{
 
     const payment=data?.transactions?.payments?.[0]||{};
     const method=payment.payment_method||{};
+    const rawStatus=String(payment.status||data.status||"action_required");
 
     const saved=(await pool.query(
       `insert into pix_payments(
          account_id,table_number,mp_order_id,external_reference,amount,status,
          payer_email,qr_code,qr_code_base64,ticket_url
-       )
-       values($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9)
-       returning id`,
-      [
-        account.id,tableNumber,data.id,externalReference,testAmount,testEmail,
-        method.qr_code||"",method.qr_code_base64||"",method.ticket_url||""
-      ]
+       ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+      [account.id,tableNumber,data.id,externalReference,comandaTotal,rawStatus,email,
+       method.qr_code||"",method.qr_code_base64||"",method.ticket_url||""]
     )).rows[0];
 
     res.json({
-      ok:true,
-      test_mode:true,
-      payment_id:saved.id,
-      amount:testAmount,
-      comanda_amount:comandaTotal,
-      qr_code:method.qr_code||"",
-      qr_code_base64:method.qr_code_base64||"",
-      ticket_url:method.ticket_url||"",
-      status:payment.status||data.status||"pending"
+      ok:true,production:true,payment_id:saved.id,amount:comandaTotal,
+      qr_code:method.qr_code||"",qr_code_base64:method.qr_code_base64||"",
+      ticket_url:method.ticket_url||"",status:rawStatus
     });
   }catch(e){
     console.error(e);
