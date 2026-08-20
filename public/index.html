@@ -171,6 +171,10 @@ textarea{min-height:88px}
 .kitchenAccept{background:#ffbf00;color:#111;font-weight:900}
 .kitchenReady{background:#2563eb;color:#fff;font-weight:900}
 .kitchenDeliver{background:#15803d;color:#fff;font-weight:900}
+.kitchenPrint{background:#2a2a2a;color:#fff;border:1px solid #555;font-weight:800}
+.printToggleOn{background:#15803d!important;color:#fff!important;font-weight:900}
+.printToggleOff{background:#2a2a2a!important;color:#fff!important}
+
 .orderStatus{display:inline-block;margin-top:8px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}
 .statusRecebido{background:#5b4500;color:#ffe18a}.statusPreparo{background:#173d74;color:#bfdbfe}.statusPronto{background:#14532d;color:#bbf7d0}.statusEntregue{background:#15351f;color:#86efac}.statusCancelado{background:#5f1515;color:#fecaca}
 
@@ -192,6 +196,8 @@ textarea{min-height:88px}
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
 let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
+let kitchenAutoPrint=localStorage.getItem("cg_kitchen_auto_print")==="1";
+let printedOrderIds=new Set(JSON.parse(sessionStorage.getItem("cg_printed_order_ids")||"[]"));
 
 try{
   const saved=JSON.parse(sessionStorage.getItem("cg_pending_order_alerts")||"[]");
@@ -251,6 +257,75 @@ function startRepeatingAlert(){
 function stopRepeatingAlert(){
   if(repeatAlertTimer){clearInterval(repeatAlertTimer);repeatAlertTimer=null}
 }
+
+function savePrintedOrders(){
+  sessionStorage.setItem("cg_printed_order_ids",JSON.stringify([...printedOrderIds].slice(-100)));
+}
+function toggleKitchenAutoPrint(){
+  kitchenAutoPrint=!kitchenAutoPrint;
+  localStorage.setItem("cg_kitchen_auto_print",kitchenAutoPrint?"1":"0");
+  const b=document.getElementById("autoPrintBtn");
+  if(b){
+    b.textContent=kitchenAutoPrint?"🖨️ Autoimpressão: LIGADA":"🖨️ Autoimpressão: DESLIGADA";
+    b.className=kitchenAutoPrint?"printToggleOn":"printToggleOff";
+  }
+  alert(kitchenAutoPrint
+    ?"Autoimpressão ativada. Quando chegar um pedido novo, o navegador abrirá a janela de impressão."
+    :"Autoimpressão desativada.");
+}
+function kitchenTicketHtml(o){
+  const items=(o.items||[]).map(i=>
+    '<div style="font-size:18px;font-weight:700;margin:7px 0">'+
+      E(i.quantity)+'x '+E(i.name)+
+    '</div>'
+  ).join("");
+  const obs=o.observation
+    ? '<div style="border:2px solid #000;padding:8px;margin-top:10px"><b>OBSERVAÇÃO:</b><br>'+E(o.observation)+'</div>'
+    : '';
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Pedido #'+E(o.id)+'</title>'+
+    '<style>@page{size:80mm auto;margin:4mm}body{font-family:Arial,sans-serif;color:#000;margin:0;font-size:14px}'+
+    '.c{text-align:center}.line{border-top:1px dashed #000;margin:8px 0}.big{font-size:26px;font-weight:900}.mesa{font-size:30px;font-weight:900}'+
+    '</style></head><body>'+
+    '<div class="c"><div class="big">CANTINHO DOS GIGANTES</div><div class="line"></div>'+
+    '<div>PEDIDO #'+E(o.id)+'</div><div class="mesa">MESA '+E(o.table_number)+'</div>'+
+    '<div>'+new Date(o.created_at||Date.now()).toLocaleString("pt-BR")+'</div></div>'+
+    '<div class="line"></div>'+items+obs+
+    '<div class="line"></div><div class="c"><b>Total: '+R(o.total||0)+'</b></div>'+
+    '</body></html>';
+}
+function printKitchenOrder(orderOrId){
+  let o=typeof orderOrId==="object"?orderOrId:null;
+  if(!o && Array.isArray(window.lastKitchenOrders))o=window.lastKitchenOrders.find(x=>Number(x.id)===Number(orderOrId));
+  if(!o){alert("Pedido não encontrado para impressão.");return}
+  const frame=document.createElement("iframe");
+  frame.style.position="fixed";
+  frame.style.right="0";
+  frame.style.bottom="0";
+  frame.style.width="1px";
+  frame.style.height="1px";
+  frame.style.border="0";
+  frame.style.opacity="0";
+  document.body.appendChild(frame);
+  const doc=frame.contentWindow.document;
+  doc.open();doc.write(kitchenTicketHtml(o));doc.close();
+  frame.onload=()=>{
+    try{
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    }finally{
+      setTimeout(()=>frame.remove(),1500);
+    }
+  };
+}
+function maybeAutoPrint(o){
+  if(!kitchenAutoPrint)return;
+  const id=Number(o.id);
+  if(printedOrderIds.has(id))return;
+  printedOrderIds.add(id);
+  savePrintedOrders();
+  setTimeout(()=>printKitchenOrder(o),350);
+}
+
 function showOrderAlert(o,isTest=false){
   dismissOrderAlert();
   const div=document.createElement("div");
@@ -264,7 +339,7 @@ function showOrderAlert(o,isTest=false){
     '<div class="row">'+
       (isTest
         ? '<button class="btn" id="dismissNewOrderBtn">OK</button>'
-        : '<button class="btn" id="acceptNewOrderBtn">✅ ACEITAR PEDIDO</button><button class="secondary" id="openNewOrderBtn">Ver pedidos</button>')+
+        : '<button class="btn" id="acceptNewOrderBtn">✅ ACEITAR PEDIDO</button><button class="kitchenPrint" id="printNewOrderBtn">🖨️ IMPRIMIR</button><button class="secondary" id="openNewOrderBtn">Ver pedidos</button>')+
     '</div>';
   document.body.appendChild(div);
 
@@ -275,6 +350,7 @@ function showOrderAlert(o,isTest=false){
   }
 
   document.getElementById("acceptNewOrderBtn").onclick=()=>acceptOrder(Number(o.id));
+  document.getElementById("printNewOrderBtn").onclick=()=>printKitchenOrder(o);
   document.getElementById("openNewOrderBtn").onclick=()=>orders();
   startRepeatingAlert();
 }
@@ -334,6 +410,7 @@ async function checkNewOrders(){
       sessionStorage.setItem("cg_last_order_id",String(lastKnownOrderId));
       for(const o of fresh){
         if(!pendingOrderById(o.id))newOrderQueue.push(o);
+        maybeAutoPrint(o);
       }
       savePendingAlerts();
       showOrderAlert(newOrderQueue[0],false);
@@ -738,6 +815,7 @@ async function confirmCloseAccount(accountId,tableNumber){
 async function orders(){
   try{
     const a=await api("/api/orders");
+    window.lastKitchenOrders=a;
     const active=a.filter(o=>o.status!=="Entregue"&&o.status!=="Cancelado");
     const finished=a.filter(o=>o.status==="Entregue"||o.status==="Cancelado");
 
@@ -759,6 +837,7 @@ async function orders(){
       }else if(o.status==="Pronto"){
         actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
       }
+      actions+='<button class="kitchenPrint" onclick="printKitchenOrder('+o.id+')">🖨️ IMPRIMIR</button>';
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
         '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
@@ -774,7 +853,11 @@ async function orders(){
     $("adminContent").innerHTML=
       '<div class="panel" id="ordersPanelMarker">'+
         '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
-        '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 Encerrar pedidos antigos</button></div></div>'+
+        '<div class="kitchenActions">'+
+          '<button id="autoPrintBtn" class="'+(kitchenAutoPrint?'printToggleOn':'printToggleOff')+'" onclick="toggleKitchenAutoPrint()">🖨️ Autoimpressão: '+(kitchenAutoPrint?'LIGADA':'DESLIGADA')+'</button>'+
+          '<button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button>'+
+          '<button class="secondary" onclick="cleanupOldOrders()">🧹 Encerrar pedidos antigos</button>'+
+        '</div></div>'+
         (active.length
           ? '<div class="orders" style="margin-top:14px">'+active.map(card).join("")+'</div>'
           : '<div class="empty">Nenhum pedido aguardando preparo.</div>')+
