@@ -774,7 +774,7 @@ async function orders(){
     $("adminContent").innerHTML=
       '<div class="panel" id="ordersPanelMarker">'+
         '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
-        '<button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button></div>'+
+        '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 Encerrar pedidos antigos</button></div></div>'+
         (active.length
           ? '<div class="orders" style="margin-top:14px">'+active.map(card).join("")+'</div>'
           : '<div class="empty">Nenhum pedido aguardando preparo.</div>')+
@@ -790,6 +790,25 @@ async function orders(){
 async function setStatus(id,status){
   await kitchenStatus(id,status);
 }
+
+
+async function cleanupOldOrders(){
+  if(!confirm("Encerrar pedidos antigos ligados a comandas que já foram fechadas? O histórico de vendas e pagamentos não será apagado."))return;
+  try{
+    const r=await api("/api/admin/orders/cleanup-closed",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"}
+    });
+    alert(r.updated
+      ? r.updated+" pedido(s) antigo(s) foram encerrados."
+      : "Nenhum pedido antigo precisava ser encerrado.");
+    newOrderQueue=newOrderQueue.filter(x=>!r.ids.includes(Number(x.id)));
+    savePendingAlerts();
+    if(!newOrderQueue.length)stopRepeatingAlert();
+    await orders();
+  }catch(e){alert(e.message)}
+}
+
 
 async function products(){
   try{
