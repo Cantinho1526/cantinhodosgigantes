@@ -1257,7 +1257,7 @@ async function dailyReport(date){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório diário - '+new Date(chosen+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
-        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="secondary" onclick="printDailyReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
+        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="btn" onclick="downloadDailyReportPdf()">📄 BAIXAR FECHAMENTO PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
           '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
@@ -1294,6 +1294,84 @@ async function dailyReport(date){
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
+}
+
+
+
+function downloadDailyReportPdf(){
+  const r=window.__dailyReport;
+  if(!r){alert("Abra primeiro o relatório diário.");return}
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("Não foi possível carregar o gerador de PDF. Atualize a página e tente novamente.");
+    return;
+  }
+
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const safe=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const money=v=>Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  let y=16;
+
+  const checkPage=(need=12)=>{
+    if(y+need>282){doc.addPage();y=16}
+  };
+  const title=t=>{
+    checkPage(12);
+    doc.setFont("helvetica","bold");doc.setFontSize(12);
+    doc.text(safe(t),15,y);y+=7;
+    doc.setDrawColor(150);doc.line(15,y,195,y);y+=6;
+  };
+  const row=(left,right)=>{
+    checkPage(7);
+    doc.setFont("helvetica","normal");doc.setFontSize(10);
+    doc.text(safe(left),18,y);
+    if(right!==undefined)doc.text(safe(right),192,y,{align:"right"});
+    y+=6;
+  };
+
+  doc.setFont("helvetica","bold");doc.setFontSize(18);
+  doc.text("CANTINHO DOS GIGANTES",105,y,{align:"center"});y+=9;
+  doc.setFontSize(14);doc.text("FECHAMENTO DIARIO",105,y,{align:"center"});y+=7;
+  doc.setFont("helvetica","normal");doc.setFontSize(10);
+  const dateText=new Date((r.date||todayLocal())+"T12:00:00").toLocaleDateString("pt-BR");
+  doc.text("Data: "+dateText,105,y,{align:"center"});y+=10;
+
+  title("RESUMO FINANCEIRO");
+  row("Faturamento",money(r.summary.total));
+  row("PIX",money(r.summary.pix));
+  row("Dinheiro",money(r.summary.dinheiro));
+  row("Cartao",money(r.summary.cartao));
+  row("Contas fechadas",String(r.summary.contas||0));
+  row("Custo dos produtos vendidos",money(r.summary.custo));
+  row("Lucro bruto",money(r.summary.lucro_bruto));
+
+  title("CONTAS FECHADAS");
+  if((r.accounts||[]).length){
+    for(const a of r.accounts){
+      const hora=new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+      row("Mesa "+a.table_number+" | "+hora+" | "+safe(a.payment_method||"-")+" | "+a.order_count+" pedido(s)",money(a.total));
+    }
+  }else row("Nenhuma conta fechada nesta data.");
+
+  title("PRODUTOS VENDIDOS");
+  if((r.products||[]).length){
+    const sorted=[...r.products].sort((a,b)=>Number(b.quantity||0)-Number(a.quantity||0));
+    for(const p of sorted)row((p.quantity||0)+"x "+safe(p.name),money(p.total));
+  }else row("Nenhum produto vendido nesta data.");
+
+  title("FECHAMENTOS DE CAIXA");
+  if((r.cash||[]).length){
+    for(const c of r.cash){
+      row("Caixa #"+c.id+" | Esperado: "+money(c.expected_amount),money(c.closing_amount));
+    }
+  }else row("Nenhum fechamento de caixa nesta data.");
+
+  checkPage(18);
+  y+=5;doc.line(15,y,195,y);y+=6;
+  doc.setFontSize(8);doc.setFont("helvetica","normal");
+  doc.text("Gerado pelo sistema Cantinho dos Gigantes em "+new Date().toLocaleString("pt-BR"),105,y,{align:"center"});
+
+  doc.save("fechamento-diario-"+(r.date||todayLocal())+".pdf");
 }
 
 
