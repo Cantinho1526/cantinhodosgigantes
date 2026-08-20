@@ -471,7 +471,7 @@ async function dashboard(){
     const s=await api("/api/stats");
     $("app").innerHTML=
       '<div class="row"><div><h1 style="margin-bottom:4px">Painel administrativo</h1><div style="color:#aaa">Cantinho dos Gigantes</div></div>'+
-      '<button class="secondary" onclick="logout()">Sair</button></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button id="adminAlertTestBtn" class="btn" onclick="testOrderAlert()">🔔 TESTAR ALERTA</button><button class="secondary" onclick="logout()">Sair</button></div></div>'+
       '<div class="stats">'+
         '<div class="stat"><small>Pedidos</small><strong>'+s.orders+'</strong></div>'+
         '<div class="stat"><small>Mesas abertas</small><strong>'+s.open_tables+'</strong></div>'+
