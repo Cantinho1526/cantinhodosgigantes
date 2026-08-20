@@ -538,6 +538,25 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar pedidos."})}
 });
 
+
+app.post("/api/admin/orders/cleanup-closed",requireAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(`
+      update orders o
+      set status='Entregue'
+      from table_accounts a
+      where o.account_id=a.id
+        and a.status='Fechada'
+        and o.status in ('Recebido','Em preparo','Pronto')
+      returning o.id
+    `);
+    res.json({ok:true,updated:r.rowCount,ids:r.rows.map(x=>x.id)});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao encerrar pedidos antigos."});
+  }
+});
+
 app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   const allowed=["Recebido","Em preparo","Pronto","Entregue","Cancelado"];
   if(!allowed.includes(req.body.status)){
