@@ -167,6 +167,12 @@ textarea{min-height:88px}
 .newOrderBadge{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#b91c1c;color:#fff;font-size:12px;font-weight:900;margin-left:5px}
 .order.newOrder{border:2px solid #ffbf00;box-shadow:0 0 0 2px #ffbf0030,0 8px 24px #0008}
 @keyframes newOrderPulse{from{transform:scale(1);box-shadow:0 12px 35px #000b}to{transform:scale(1.015);box-shadow:0 12px 45px #ffbf0040}}
+.kitchenActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.kitchenAccept{background:#ffbf00;color:#111;font-weight:900}
+.kitchenReady{background:#2563eb;color:#fff;font-weight:900}
+.kitchenDeliver{background:#15803d;color:#fff;font-weight:900}
+.orderStatus{display:inline-block;margin-top:8px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}
+.statusRecebido{background:#5b4500;color:#ffe18a}.statusPreparo{background:#173d74;color:#bfdbfe}.statusPronto{background:#14532d;color:#bbf7d0}.statusEntregue{background:#15351f;color:#86efac}.statusCancelado{background:#5f1515;color:#fecaca}
 
 </style>
 </head>
@@ -185,9 +191,21 @@ textarea{min-height:88px}
 
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
-let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false;
+let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
 
-function stopOrderWatch(){if(adminOrderWatch){clearInterval(adminOrderWatch);adminOrderWatch=null}orderWatchBusy=false}
+try{
+  const saved=JSON.parse(sessionStorage.getItem("cg_pending_order_alerts")||"[]");
+  if(Array.isArray(saved))newOrderQueue=saved;
+}catch(_e){newOrderQueue=[]}
+
+function savePendingAlerts(){
+  sessionStorage.setItem("cg_pending_order_alerts",JSON.stringify(newOrderQueue));
+}
+function stopOrderWatch(){
+  if(adminOrderWatch){clearInterval(adminOrderWatch);adminOrderWatch=null}
+  orderWatchBusy=false;
+  stopRepeatingAlert();
+}
 function orderBeep(){
   try{
     audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
@@ -196,51 +214,167 @@ function orderBeep(){
     [0,0.18,0.36].forEach((delay,i)=>{
       const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();
       osc.type="sine";osc.frequency.value=i===1?880:660;
-      gain.gain.setValueAtTime(0.0001,now+delay);gain.gain.exponentialRampToValueAtTime(0.18,now+delay+0.015);gain.gain.exponentialRampToValueAtTime(0.0001,now+delay+0.14);
-      osc.connect(gain);gain.connect(audioCtx.destination);osc.start(now+delay);osc.stop(now+delay+0.16);
+      gain.gain.setValueAtTime(0.0001,now+delay);
+      gain.gain.exponentialRampToValueAtTime(0.18,now+delay+0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001,now+delay+0.14);
+      osc.connect(gain);gain.connect(audioCtx.destination);
+      osc.start(now+delay);osc.stop(now+delay+0.16);
     });
   }catch(_e){}
 }
-function dismissOrderAlert(){const x=$("newOrderToast");if(x)x.remove()}
-function showOrderAlert(o){
-  dismissOrderAlert();
-  const div=document.createElement("div");div.id="newOrderToast";div.className="newOrderToast";
-  div.innerHTML='<h3>🔔 NOVO PEDIDO!</h3><p><b>Pedido #'+o.id+' • Mesa '+E(o.table_number)+'</b></p><p>'+o.items.map(i=>i.quantity+'x '+E(i.name)).join(' • ')+'</p><div class="row"><button class="btn" id="openNewOrderBtn">Ver pedido</button><button class="secondary" id="dismissNewOrderBtn">Fechar</button></div>';
-  document.body.appendChild(div);
-  $("openNewOrderBtn").onclick=()=>{dismissOrderAlert();orders()};
-  $("dismissNewOrderBtn").onclick=dismissOrderAlert;
+function dismissOrderAlert(){
+  const x=document.getElementById("newOrderToast");
+  if(x)x.remove();
+}
+function pendingOrderById(id){
+  return newOrderQueue.find(x=>Number(x.id)===Number(id));
+}
+function removePendingOrder(id){
+  newOrderQueue=newOrderQueue.filter(x=>Number(x.id)!==Number(id));
+  savePendingAlerts();
+  if(!newOrderQueue.length){
+    stopRepeatingAlert();
+    dismissOrderAlert();
+  }else{
+    showOrderAlert(newOrderQueue[0],false);
+  }
+}
+function startRepeatingAlert(){
+  if(repeatAlertTimer||!newOrderQueue.length)return;
   orderBeep();
+  repeatAlertTimer=setInterval(()=>{
+    if(!newOrderQueue.length){stopRepeatingAlert();return}
+    orderBeep();
+    if(!document.getElementById("newOrderToast"))showOrderAlert(newOrderQueue[0],false);
+  },8000);
+}
+function stopRepeatingAlert(){
+  if(repeatAlertTimer){clearInterval(repeatAlertTimer);repeatAlertTimer=null}
+}
+function showOrderAlert(o,isTest=false){
+  dismissOrderAlert();
+  const div=document.createElement("div");
+  div.id="newOrderToast";
+  div.className="newOrderToast";
+  const items=(o.items||[]).map(i=>i.quantity+'x '+E(i.name)).join(' • ');
+  div.innerHTML=
+    '<h3>🔔 '+(isTest?'TESTE DO ALERTA':'NOVO PEDIDO!')+'</h3>'+
+    '<p><b>Pedido #'+E(o.id)+' • Mesa '+E(o.table_number)+'</b></p>'+
+    '<p>'+items+'</p>'+
+    '<div class="row">'+
+      (isTest
+        ? '<button class="btn" id="dismissNewOrderBtn">OK</button>'
+        : '<button class="btn" id="acceptNewOrderBtn">✅ ACEITAR PEDIDO</button><button class="secondary" id="openNewOrderBtn">Ver pedidos</button>')+
+    '</div>';
+  document.body.appendChild(div);
+
+  if(isTest){
+    document.getElementById("dismissNewOrderBtn").onclick=dismissOrderAlert;
+    orderBeep();
+    return;
+  }
+
+  document.getElementById("acceptNewOrderBtn").onclick=()=>acceptOrder(Number(o.id));
+  document.getElementById("openNewOrderBtn").onclick=()=>orders();
+  startRepeatingAlert();
+}
+async function acceptOrder(id){
+  try{
+    await api("/api/orders/"+id,{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({status:"Em preparo"})
+    });
+    removePendingOrder(id);
+    await orders();
+  }catch(e){alert(e.message)}
+}
+async function kitchenStatus(id,status){
+  try{
+    await api("/api/orders/"+id,{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({status})
+    });
+    if(status!=="Recebido")removePendingOrder(id);
+    await orders();
+  }catch(e){alert(e.message)}
 }
 async function checkNewOrders(){
   if(!adminToken||orderWatchBusy)return;
   orderWatchBusy=true;
   try{
     const a=await api("/api/orders?watch="+Date.now());
+
+    // Remove da fila qualquer pedido que já tenha sido aceito/cancelado.
+    const byId=new Map(a.map(o=>[Number(o.id),o]));
+    newOrderQueue=newOrderQueue.filter(x=>{
+      const current=byId.get(Number(x.id));
+      return current && current.status==="Recebido";
+    });
+    savePendingAlerts();
+
     const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
-    if(!lastKnownOrderId){lastKnownOrderId=newest;sessionStorage.setItem("cg_last_order_id",String(newest));return}
-    const fresh=a.filter(o=>(Number(o.id)||0)>lastKnownOrderId).sort((x,y)=>Number(x.id)-Number(y.id));
+    if(!lastKnownOrderId){
+      lastKnownOrderId=newest;
+      sessionStorage.setItem("cg_last_order_id",String(newest));
+      if(newOrderQueue.length){
+        showOrderAlert(newOrderQueue[0],false);
+        startRepeatingAlert();
+      }
+      return;
+    }
+
+    const fresh=a
+      .filter(o=>(Number(o.id)||0)>lastKnownOrderId && o.status==="Recebido")
+      .sort((x,y)=>Number(x.id)-Number(y.id));
+
     if(fresh.length){
       lastKnownOrderId=Math.max(lastKnownOrderId,...fresh.map(o=>Number(o.id)||0));
       sessionStorage.setItem("cg_last_order_id",String(lastKnownOrderId));
-      newOrderQueue.push(...fresh);
-      showOrderAlert(fresh[fresh.length-1]);
+      for(const o of fresh){
+        if(!pendingOrderById(o.id))newOrderQueue.push(o);
+      }
+      savePendingAlerts();
+      showOrderAlert(newOrderQueue[0],false);
+      startRepeatingAlert();
+
+      // Se a tela de Pedidos estiver aberta, atualiza a lista automaticamente.
+      if(document.getElementById("ordersPanelMarker"))orders();
     }
-  }catch(e){console.error("Alerta de pedidos:",e)}finally{orderWatchBusy=false}
+  }catch(e){
+    console.error("Alerta de pedidos:",e);
+  }finally{
+    orderWatchBusy=false;
+  }
 }
 async function startOrderWatch(){
   stopOrderWatch();
   try{
     const a=await api("/api/orders?watch="+Date.now());
+    const byId=new Map(a.map(o=>[Number(o.id),o]));
+    newOrderQueue=newOrderQueue.filter(x=>{
+      const current=byId.get(Number(x.id));
+      return current && current.status==="Recebido";
+    });
+    savePendingAlerts();
+
     const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
     lastKnownOrderId=newest;
     sessionStorage.setItem("cg_last_order_id",String(newest));
+
+    if(newOrderQueue.length){
+      showOrderAlert(newOrderQueue[0],false);
+      startRepeatingAlert();
+    }
   }catch(e){console.error("Início do alerta:",e)}
+
   adminOrderWatch=setInterval(checkNewOrders,2000);
 }
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&adminToken)checkNewOrders()});
 window.addEventListener("focus",()=>{if(adminToken)checkNewOrders()});
 function testOrderAlert(){
-  showOrderAlert({id:"TESTE",table_number:"TESTE",items:[{quantity:1,name:"Alerta funcionando"}]});
+  showOrderAlert({id:"TESTE",table_number:"1",items:[{quantity:1,name:"Alerta funcionando"}]},true);
 }
 
 const $=x=>document.getElementById(x);
@@ -604,34 +738,57 @@ async function confirmCloseAccount(accountId,tableNumber){
 async function orders(){
   try{
     const a=await api("/api/orders");
-    $("adminContent").innerHTML=
-      '<div class="panel"><div class="row"><h2>Pedidos</h2><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button></div>'+
-      (a.length?'<div class="orders">'+a.map(o=>
-        '<div class="order '+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?'newOrder':'')+'">'+
-          '<h3>#'+o.id+' — Mesa '+o.table_number+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
-          '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+'</p>'+
-          o.items.map(i=>'<div>'+i.quantity+'x '+E(i.name)+'</div>').join("")+
-          (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
-          '<h3>'+R(o.total)+'</h3>'+
-          '<select onchange="setStatus('+o.id+',this.value)">'+
-            ["Recebido","Em preparo","Pronto","Entregue","Cancelado"].map(s=>
-              '<option '+(s===o.status?"selected":"")+'>'+s+'</option>'
-            ).join("")+
-          '</select>'+
-        '</div>'
-      ).join("")+'</div>':'<div class="empty">Nenhum pedido registrado.</div>')+
+    const active=a.filter(o=>o.status!=="Entregue"&&o.status!=="Cancelado");
+    const finished=a.filter(o=>o.status==="Entregue"||o.status==="Cancelado");
+
+    const card=o=>{
+      const isNew=Boolean(pendingOrderById(o.id));
+      const statusClass={
+        "Recebido":"statusRecebido",
+        "Em preparo":"statusPreparo",
+        "Pronto":"statusPronto",
+        "Entregue":"statusEntregue",
+        "Cancelado":"statusCancelado"
+      }[o.status]||"";
+
+      let actions='';
+      if(o.status==="Recebido"){
+        actions='<button class="kitchenAccept" onclick="acceptOrder('+o.id+')">✅ ACEITAR PEDIDO</button>';
+      }else if(o.status==="Em preparo"){
+        actions='<button class="kitchenReady" onclick="kitchenStatus('+o.id+',\'Pronto\')">🍳 MARCAR COMO PRONTO</button>';
+      }else if(o.status==="Pronto"){
+        actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
+      }
+
+      return '<div class="order '+(isNew?'newOrder':'')+'">'+
+        '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
+        '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+'</p>'+
+        o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
+        (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
+        '<h3>'+R(o.total)+'</h3>'+
+        '<span class="orderStatus '+statusClass+'">'+E(o.status)+'</span>'+
+        (actions?'<div class="kitchenActions">'+actions+'</div>':'')+
       '</div>';
-    newOrderQueue=[];
+    };
+
+    $("adminContent").innerHTML=
+      '<div class="panel" id="ordersPanelMarker">'+
+        '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
+        '<button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button></div>'+
+        (active.length
+          ? '<div class="orders" style="margin-top:14px">'+active.map(card).join("")+'</div>'
+          : '<div class="empty">Nenhum pedido aguardando preparo.</div>')+
+      '</div>'+
+      (finished.length
+        ? '<div class="panel"><h2>Últimos finalizados</h2><div class="orders">'+finished.slice(0,12).map(card).join("")+'</div></div>'
+        : '');
+
+    if(newOrderQueue.length)startRepeatingAlert();
   }catch(e){alert(e.message)}
 }
 
 async function setStatus(id,status){
-  await api("/api/orders/"+id,{
-    method:"PATCH",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({status})
-  });
-  orders();
+  await kitchenStatus(id,status);
 }
 
 async function products(){
