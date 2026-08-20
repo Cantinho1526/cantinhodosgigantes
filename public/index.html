@@ -736,27 +736,9 @@ async function confirmCloseAccount(accountId,tableNumber){
 }
 
 
-
-function pdfSafe(s){return String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"")}
-function downloadOrderPdf(id){
-  const o=(window.lastKitchenOrders||[]).find(x=>Number(x.id)===Number(id));
-  if(!o){alert("Pedido não encontrado.");return}
-  if(!window.jspdf||!window.jspdf.jsPDF){alert("Atualize a página e tente novamente.");return}
-  const {jsPDF}=window.jspdf,doc=new jsPDF({unit:"mm",format:"a4"});let y=18;
-  doc.setFont("helvetica","bold");doc.setFontSize(18);doc.text("CANTINHO DOS GIGANTES",105,y,{align:"center"});y+=10;
-  doc.setFontSize(16);doc.text("Pedido #"+o.id+" - Mesa "+o.table_number,105,y,{align:"center"});y+=8;
-  doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(new Date(o.created_at).toLocaleString("pt-BR"),105,y,{align:"center"});y+=10;
-  doc.line(15,y,195,y);y+=8;doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("ITENS",15,y);y+=7;doc.setFont("helvetica","normal");
-  for(const i of (o.items||[])){const p=doc.splitTextToSize(pdfSafe(i.quantity+"x "+i.name),175);doc.text(p,18,y);y+=6*p.length}
-  if(o.observation){y+=4;doc.setFont("helvetica","bold");doc.text("OBSERVACAO:",15,y);y+=6;doc.setFont("helvetica","normal");const p=doc.splitTextToSize(pdfSafe(o.observation),175);doc.text(p,18,y);y+=6*p.length}
-  y+=5;doc.line(15,y,195,y);y+=8;doc.setFont("helvetica","bold");doc.setFontSize(13);doc.text("Status: "+pdfSafe(o.status),15,y);y+=8;doc.setFontSize(15);doc.text("Total: "+pdfSafe(R(o.total)),15,y);
-  doc.save("pedido_"+o.id+"_mesa_"+o.table_number+".pdf");
-}
-
 async function orders(){
   try{
     const a=await api("/api/orders");
-    window.lastKitchenOrders=a;
     const active=a.filter(o=>o.status!=="Entregue"&&o.status!=="Cancelado");
     const finished=a.filter(o=>o.status==="Entregue"||o.status==="Cancelado");
 
@@ -778,7 +760,6 @@ async function orders(){
       }else if(o.status==="Pronto"){
         actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
       }
-      actions+='<button class="secondary" onclick="downloadOrderPdf('+o.id+')">📄 BAIXAR PDF</button>';
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
         '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
@@ -1181,7 +1162,7 @@ async function periodReport(start,end){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório por período - '+new Date(first+'T12:00:00').toLocaleDateString("pt-BR")+' a '+new Date(last+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
-        '<div class="row"><h2>📆 Relatório por período</h2><div class="noPrint"><button class="secondary" onclick="printPeriodReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportPeriodCSV()">Exportar CSV</button></div></div>'+
+        '<div class="row"><h2>📆 Relatório por período</h2><div class="noPrint"><button class="btn" onclick="downloadPeriodReportPdf()">📄 BAIXAR RELATÓRIO PDF</button> <button class="secondary" onclick="exportPeriodCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data inicial</label><input id="periodStart" type="date" value="'+E(first)+'"></div>'+
           '<div class="field"><label>Data final</label><input id="periodEnd" type="date" value="'+E(last)+'"></div>'+
@@ -1195,6 +1176,9 @@ async function periodReport(start,end){
           '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
           '<div class="reportBox"><small>Ticket médio</small><strong>'+R(r.summary.ticket_medio)+'</strong></div>'+
           '<div class="reportBox"><small>Itens vendidos</small><strong>'+r.summary.itens+'</strong></div>'+
+          '<div class="reportBox"><small>Custo dos produtos vendidos</small><strong>'+R(r.summary.custo||0)+'</strong></div>'+
+          '<div class="reportBox"><small>Lucro bruto</small><strong>'+R(r.summary.lucro_bruto||0)+'</strong></div>'+
+          '<div class="reportBox"><small>Margem de lucro</small><strong>'+((Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0).toFixed(1).replace(".",",")+'%')+'</strong></div>'+
         '</div>'+
         '<div class="reportSection"><h3>Resumo por dia</h3>'+
           (r.days.length?
@@ -1227,7 +1211,10 @@ function exportPeriodCSV(){
     ["Cartão",r.summary.cartao],
     ["Contas",r.summary.contas],
     ["Ticket médio",r.summary.ticket_medio],
-    ["Itens vendidos",r.summary.itens],[],
+    ["Itens vendidos",r.summary.itens],
+    ["Custo dos produtos vendidos",r.summary.custo||0],
+    ["Lucro bruto",r.summary.lucro_bruto||0],
+    ["Margem de lucro (%)",Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0],[],
     ["Resumo por dia"],
     ["Data","Contas","Total"],
     ...r.days.map(d=>[d.day,d.contas,d.total]),[],
@@ -1257,7 +1244,7 @@ async function dailyReport(date){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório diário - '+new Date(chosen+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
-        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="btn" onclick="downloadDailyReportPdf()">📄 BAIXAR FECHAMENTO PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
+        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="secondary" onclick="printDailyReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
           '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
@@ -1297,10 +1284,18 @@ async function dailyReport(date){
 }
 
 
+function printDailyReport(){
+  if(!window.__dailyReport){
+    alert("Abra primeiro o relatório diário.");
+    return;
+  }
+  window.print();
+}
 
-function downloadDailyReportPdf(){
-  const r=window.__dailyReport;
-  if(!r){alert("Abra primeiro o relatório diário.");return}
+
+function downloadPeriodReportPdf(){
+  const r=window.__periodReport;
+  if(!r){alert("Abra primeiro o relatório por período.");return}
   if(!window.jspdf||!window.jspdf.jsPDF){
     alert("Não foi possível carregar o gerador de PDF. Atualize a página e tente novamente.");
     return;
@@ -1310,15 +1305,13 @@ function downloadDailyReportPdf(){
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const safe=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
   const money=v=>Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  const margin=Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0;
   let y=16;
 
-  const checkPage=(need=12)=>{
-    if(y+need>282){doc.addPage();y=16}
-  };
+  const checkPage=(need=12)=>{if(y+need>282){doc.addPage();y=16}};
   const title=t=>{
     checkPage(12);
-    doc.setFont("helvetica","bold");doc.setFontSize(12);
-    doc.text(safe(t),15,y);y+=7;
+    doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text(safe(t),15,y);y+=7;
     doc.setDrawColor(150);doc.line(15,y,195,y);y+=6;
   };
   const row=(left,right)=>{
@@ -1331,57 +1324,43 @@ function downloadDailyReportPdf(){
 
   doc.setFont("helvetica","bold");doc.setFontSize(18);
   doc.text("CANTINHO DOS GIGANTES",105,y,{align:"center"});y+=9;
-  doc.setFontSize(14);doc.text("FECHAMENTO DIARIO",105,y,{align:"center"});y+=7;
+  doc.setFontSize(14);doc.text("RELATORIO POR PERIODO",105,y,{align:"center"});y+=7;
   doc.setFont("helvetica","normal");doc.setFontSize(10);
-  const dateText=new Date((r.date||todayLocal())+"T12:00:00").toLocaleDateString("pt-BR");
-  doc.text("Data: "+dateText,105,y,{align:"center"});y+=10;
+  const startText=new Date(r.start+"T12:00:00").toLocaleDateString("pt-BR");
+  const endText=new Date(r.end+"T12:00:00").toLocaleDateString("pt-BR");
+  doc.text("Periodo: "+startText+" a "+endText,105,y,{align:"center"});y+=10;
 
-  title("RESUMO FINANCEIRO");
+  title("RESUMO");
   row("Faturamento",money(r.summary.total));
   row("PIX",money(r.summary.pix));
   row("Dinheiro",money(r.summary.dinheiro));
   row("Cartao",money(r.summary.cartao));
   row("Contas fechadas",String(r.summary.contas||0));
-  row("Custo dos produtos vendidos",money(r.summary.custo));
-  row("Lucro bruto",money(r.summary.lucro_bruto));
+  row("Ticket medio",money(r.summary.ticket_medio));
+  row("Itens vendidos",String(r.summary.itens||0));
+  row("Custo dos produtos vendidos",money(r.summary.custo||0));
+  row("Lucro bruto",money(r.summary.lucro_bruto||0));
+  row("Margem de lucro",margin.toFixed(1).replace(".",",")+"%");
 
-  title("CONTAS FECHADAS");
-  if((r.accounts||[]).length){
-    for(const a of r.accounts){
-      const hora=new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-      row("Mesa "+a.table_number+" | "+hora+" | "+safe(a.payment_method||"-")+" | "+a.order_count+" pedido(s)",money(a.total));
+  title("RESUMO POR DIA");
+  if((r.days||[]).length){
+    for(const d of r.days){
+      const dt=new Date(d.day+"T12:00:00").toLocaleDateString("pt-BR");
+      row(dt+" | "+d.contas+" conta(s)",money(d.total));
     }
-  }else row("Nenhuma conta fechada nesta data.");
+  }else row("Nenhuma venda no periodo.");
 
   title("PRODUTOS VENDIDOS");
   if((r.products||[]).length){
-    const sorted=[...r.products].sort((a,b)=>Number(b.quantity||0)-Number(a.quantity||0));
-    for(const p of sorted)row((p.quantity||0)+"x "+safe(p.name),money(p.total));
-  }else row("Nenhum produto vendido nesta data.");
+    for(const p of r.products)row((p.quantity||0)+"x "+safe(p.name),money(p.total));
+  }else row("Nenhum produto vendido no periodo.");
 
-  title("FECHAMENTOS DE CAIXA");
-  if((r.cash||[]).length){
-    for(const c of r.cash){
-      row("Caixa #"+c.id+" | Esperado: "+money(c.expected_amount),money(c.closing_amount));
-    }
-  }else row("Nenhum fechamento de caixa nesta data.");
+  checkPage(18);y+=5;doc.line(15,y,195,y);y+=6;
+  doc.setFontSize(8);doc.text("Gerado pelo sistema Cantinho dos Gigantes em "+new Date().toLocaleString("pt-BR"),105,y,{align:"center"});
 
-  checkPage(18);
-  y+=5;doc.line(15,y,195,y);y+=6;
-  doc.setFontSize(8);doc.setFont("helvetica","normal");
-  doc.text("Gerado pelo sistema Cantinho dos Gigantes em "+new Date().toLocaleString("pt-BR"),105,y,{align:"center"});
-
-  doc.save("fechamento-diario-"+(r.date||todayLocal())+".pdf");
+  doc.save("relatorio-periodo-"+r.start+"-a-"+r.end+".pdf");
 }
 
-
-function printDailyReport(){
-  if(!window.__dailyReport){
-    alert("Abra primeiro o relatório diário.");
-    return;
-  }
-  window.print();
-}
 
 function printPeriodReport(){
   if(!window.__periodReport){
