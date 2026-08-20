@@ -161,6 +161,13 @@ textarea{min-height:88px}
   a{color:#111!important;text-decoration:none!important}
 }
 
+/* Alertas de novos pedidos no painel administrativo */
+.newOrderToast{position:fixed;right:18px;top:18px;z-index:90;width:min(430px,calc(100vw - 36px));background:#181300;border:2px solid #ffbf00;border-radius:16px;padding:16px 18px;box-shadow:0 16px 45px #000b;animation:newOrderPulse .9s ease-in-out infinite alternate}
+.newOrderToast h3{margin:0 0 6px;color:#ffd34d;font-size:22px}.newOrderToast p{margin:4px 0;color:#fff}.newOrderToast .row{margin-top:12px}
+.newOrderBadge{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#b91c1c;color:#fff;font-size:12px;font-weight:900;margin-left:5px}
+.order.newOrder{border:2px solid #ffbf00;box-shadow:0 0 0 2px #ffbf0030,0 8px 24px #0008}
+@keyframes newOrderPulse{from{transform:scale(1);box-shadow:0 12px 35px #000b}to{transform:scale(1.015);box-shadow:0 12px 45px #ffbf0040}}
+
 </style>
 </head>
 <body>
@@ -178,6 +185,48 @@ textarea{min-height:88px}
 
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
+let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null;
+
+function stopOrderWatch(){if(adminOrderWatch){clearInterval(adminOrderWatch);adminOrderWatch=null}}
+function orderBeep(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==="suspended")audioCtx.resume();
+    const now=audioCtx.currentTime;
+    [0,0.18,0.36].forEach((delay,i)=>{
+      const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();
+      osc.type="sine";osc.frequency.value=i===1?880:660;
+      gain.gain.setValueAtTime(0.0001,now+delay);gain.gain.exponentialRampToValueAtTime(0.18,now+delay+0.015);gain.gain.exponentialRampToValueAtTime(0.0001,now+delay+0.14);
+      osc.connect(gain);gain.connect(audioCtx.destination);osc.start(now+delay);osc.stop(now+delay+0.16);
+    });
+  }catch(_e){}
+}
+function dismissOrderAlert(){const x=$("newOrderToast");if(x)x.remove()}
+function showOrderAlert(o){
+  dismissOrderAlert();
+  const div=document.createElement("div");div.id="newOrderToast";div.className="newOrderToast";
+  div.innerHTML='<h3>🔔 NOVO PEDIDO!</h3><p><b>Pedido #'+o.id+' • Mesa '+E(o.table_number)+'</b></p><p>'+o.items.map(i=>i.quantity+'x '+E(i.name)).join(' • ')+'</p><div class="row"><button class="btn" id="openNewOrderBtn">Ver pedido</button><button class="secondary" id="dismissNewOrderBtn">Fechar</button></div>';
+  document.body.appendChild(div);
+  $("openNewOrderBtn").onclick=()=>{dismissOrderAlert();orders()};
+  $("dismissNewOrderBtn").onclick=dismissOrderAlert;
+  orderBeep();
+}
+async function checkNewOrders(){
+  if(!adminToken)return;
+  try{
+    const a=await api("/api/orders");
+    const newest=a.length?Number(a[0].id):0;
+    if(!lastKnownOrderId){lastKnownOrderId=newest;return}
+    const fresh=a.filter(o=>Number(o.id)>lastKnownOrderId).sort((x,y)=>Number(x.id)-Number(y.id));
+    if(fresh.length){lastKnownOrderId=Math.max(lastKnownOrderId,...fresh.map(o=>Number(o.id)));newOrderQueue.push(...fresh);showOrderAlert(fresh[fresh.length-1]);}
+  }catch(_e){}
+}
+async function startOrderWatch(){
+  stopOrderWatch();
+  try{const a=await api("/api/orders");lastKnownOrderId=a.length?Number(a[0].id):0}catch(_e){}
+  adminOrderWatch=setInterval(checkNewOrders,5000);
+}
+
 const $=x=>document.getElementById(x);
 const R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -427,6 +476,7 @@ async function dashboard(){
         '<button onclick="qrs()">📱 QR Codes</button>'+
       '</div>'+
       '<div id="adminContent"></div>';
+    startOrderWatch();
     accounts();
   }catch(e){
     adminToken="";sessionStorage.removeItem("cg_admin_token");adminLogin();
@@ -434,6 +484,8 @@ async function dashboard(){
 }
 
 function logout(){
+  stopOrderWatch();
+  dismissOrderAlert();
   adminToken="";
   sessionStorage.removeItem("cg_admin_token");
   client();
@@ -539,8 +591,8 @@ async function orders(){
     $("adminContent").innerHTML=
       '<div class="panel"><h2>Pedidos</h2>'+
       (a.length?'<div class="orders">'+a.map(o=>
-        '<div class="order">'+
-          '<h3>#'+o.id+' — Mesa '+o.table_number+'</h3>'+
+        '<div class="order '+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?'newOrder':'')+'">'+
+          '<h3>#'+o.id+' — Mesa '+o.table_number+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
           '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+'</p>'+
           o.items.map(i=>'<div>'+i.quantity+'x '+E(i.name)+'</div>').join("")+
           (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
@@ -553,6 +605,7 @@ async function orders(){
         '</div>'
       ).join("")+'</div>':'<div class="empty">Nenhum pedido registrado.</div>')+
       '</div>';
+    newOrderQueue=[];
   }catch(e){alert(e.message)}
 }
 
