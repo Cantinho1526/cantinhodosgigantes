@@ -185,9 +185,9 @@ textarea{min-height:88px}
 
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
-let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null;
+let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false;
 
-function stopOrderWatch(){if(adminOrderWatch){clearInterval(adminOrderWatch);adminOrderWatch=null}}
+function stopOrderWatch(){if(adminOrderWatch){clearInterval(adminOrderWatch);adminOrderWatch=null}orderWatchBusy=false}
 function orderBeep(){
   try{
     audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
@@ -212,19 +212,35 @@ function showOrderAlert(o){
   orderBeep();
 }
 async function checkNewOrders(){
-  if(!adminToken)return;
+  if(!adminToken||orderWatchBusy)return;
+  orderWatchBusy=true;
   try{
-    const a=await api("/api/orders");
-    const newest=a.length?Number(a[0].id):0;
-    if(!lastKnownOrderId){lastKnownOrderId=newest;return}
-    const fresh=a.filter(o=>Number(o.id)>lastKnownOrderId).sort((x,y)=>Number(x.id)-Number(y.id));
-    if(fresh.length){lastKnownOrderId=Math.max(lastKnownOrderId,...fresh.map(o=>Number(o.id)));newOrderQueue.push(...fresh);showOrderAlert(fresh[fresh.length-1]);}
-  }catch(_e){}
+    const a=await api("/api/orders?watch="+Date.now());
+    const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
+    if(!lastKnownOrderId){lastKnownOrderId=newest;sessionStorage.setItem("cg_last_order_id",String(newest));return}
+    const fresh=a.filter(o=>(Number(o.id)||0)>lastKnownOrderId).sort((x,y)=>Number(x.id)-Number(y.id));
+    if(fresh.length){
+      lastKnownOrderId=Math.max(lastKnownOrderId,...fresh.map(o=>Number(o.id)||0));
+      sessionStorage.setItem("cg_last_order_id",String(lastKnownOrderId));
+      newOrderQueue.push(...fresh);
+      showOrderAlert(fresh[fresh.length-1]);
+    }
+  }catch(e){console.error("Alerta de pedidos:",e)}finally{orderWatchBusy=false}
 }
 async function startOrderWatch(){
   stopOrderWatch();
-  try{const a=await api("/api/orders");lastKnownOrderId=a.length?Number(a[0].id):0}catch(_e){}
-  adminOrderWatch=setInterval(checkNewOrders,5000);
+  try{
+    const a=await api("/api/orders?watch="+Date.now());
+    const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
+    lastKnownOrderId=newest;
+    sessionStorage.setItem("cg_last_order_id",String(newest));
+  }catch(e){console.error("Início do alerta:",e)}
+  adminOrderWatch=setInterval(checkNewOrders,2000);
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&adminToken)checkNewOrders()});
+window.addEventListener("focus",()=>{if(adminToken)checkNewOrders()});
+function testOrderAlert(){
+  showOrderAlert({id:"TESTE",table_number:"TESTE",items:[{quantity:1,name:"Alerta funcionando"}]});
 }
 
 const $=x=>document.getElementById(x);
@@ -589,7 +605,7 @@ async function orders(){
   try{
     const a=await api("/api/orders");
     $("adminContent").innerHTML=
-      '<div class="panel"><h2>Pedidos</h2>'+
+      '<div class="panel"><div class="row"><h2>Pedidos</h2><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button></div>'+
       (a.length?'<div class="orders">'+a.map(o=>
         '<div class="order '+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?'newOrder':'')+'">'+
           '<h3>#'+o.id+' — Mesa '+o.table_number+(newOrderQueue.some(n=>Number(n.id)===Number(o.id))?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
