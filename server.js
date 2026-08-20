@@ -128,6 +128,8 @@ async function init(){
       unit_price numeric(10,2) not null
     );
 
+    ALTER TABLE order_items ADD COLUMN IF NOT EXISTS unit_cost numeric(10,2);
+
     CREATE TABLE IF NOT EXISTS cash_sessions(
       id serial primary key,
       status text not null default 'Aberto',
@@ -369,16 +371,16 @@ app.post("/api/orders",async(req,res)=>{
     for(const item of items){
       const quantity=Math.max(1,Math.floor(Number(item.quantity)));
       const r=await c.query(
-        "select id,name,price,stock_quantity,stock_control from products where id=$1 and active=true for update",
+        "select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",
         [Number(item.product_id)]
       );
       if(!r.rowCount)throw Error("Produto inválido");
-      const p=r.rows[0], price=Number(p.price);
+      const p=r.rows[0], price=Number(p.price), cost=Number(p.cost_price||0);
       if(p.stock_control && Number(p.stock_quantity)<quantity){
         throw Error(`Estoque insuficiente para ${p.name}. Disponível: ${p.stock_quantity}`);
       }
       total+=price*quantity;
-      normalized.push({p,quantity,price});
+      normalized.push({p,quantity,price,cost});
     }
 
     const order=(await c.query(
@@ -390,9 +392,9 @@ app.post("/api/orders",async(req,res)=>{
 
     for(const x of normalized){
       await c.query(
-        `insert into order_items(order_id,product_id,product_name,quantity,unit_price)
-         values($1,$2,$3,$4,$5)`,
-        [order.id,x.p.id,x.p.name,x.quantity,x.price]
+        `insert into order_items(order_id,product_id,product_name,quantity,unit_price,unit_cost)
+         values($1,$2,$3,$4,$5,$6)`,
+        [order.id,x.p.id,x.p.name,x.quantity,x.price,x.cost]
       );
       if(x.p.stock_control){
         const previous=Number(x.p.stock_quantity||0);
@@ -1152,6 +1154,19 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       order by sum(oi.quantity) desc,sum(oi.quantity*oi.unit_price) desc
     `,[start,end])).rows;
 
+    const financial=(await pool.query(`
+      select
+        coalesce(sum(oi.quantity * coalesce(oi.unit_cost,p.cost_price,0)),0)::numeric as cost
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      left join products p on p.id=oi.product_id
+      where a.status='Fechada'
+        and o.status<>'Cancelado'
+        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
+        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')
+    `,[start,end])).rows[0];
+
     const byDay={};
     for(const a of accounts){
       const d=new Date(a.closed_at);
@@ -1177,7 +1192,9 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         cartao,
         contas,
         ticket_medio:contas?total/contas:0,
-        itens:items
+        itens:items,
+        custo:Number(financial.cost),
+        lucro_bruto:total-Number(financial.cost)
       },
       products:products.map(x=>({...x,total:Number(x.total)})),
       days
@@ -1242,7 +1259,7 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
 
     const financial=(await pool.query(`
       select
-        coalesce(sum(oi.quantity * coalesce(p.cost_price,0)),0)::numeric as cost
+        coalesce(sum(oi.quantity * coalesce(oi.unit_cost,p.cost_price,0)),0)::numeric as cost
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
