@@ -553,6 +553,23 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
 });
 
 
+
+app.post("/api/admin/orders/cleanup-old-48h",requireAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(`
+      update orders
+      set status='Entregue'
+      where status in ('Recebido','Em preparo','Pronto')
+        and created_at <= now() - interval '48 hours'
+      returning id
+    `);
+    res.json({ok:true,updated:r.rowCount,ids:r.rows.map(x=>x.id)});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao limpar pedidos com 48 horas ou mais."});
+  }
+});
+
 app.post("/api/admin/orders/cleanup-closed",requireAdmin,async(req,res)=>{
   try{
     const r=await pool.query(`
