@@ -161,6 +161,7 @@ async function init(){
 
     CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
     CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pix_account_status ON pix_payments(account_id,status);
   `);
 
   await pool.query(`
@@ -272,12 +273,15 @@ async function reconcilePaidPixAccounts(){
 
           // Só fecha se o valor pago corresponde ao valor da comanda.
           if(Math.abs(total-Number(p.amount))<0.01){
-            await c.query(`
+            const updated=await c.query(`
               update table_accounts
               set status='Fechada',payment_method='PIX',closed_at=now()
-              where id=$1
+              where id=$1 and status='Aberta'
+              returning id
             `,[account.id]);
-            closed++;
+
+            // Incrementa somente quando esta chamada realmente mudou Aberta -> Fechada.
+            if(updated.rowCount===1)closed++;
           }else{
             console.error(
               "PIX pago com valor diferente da comanda:",
@@ -738,7 +742,14 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
       return res.json({ok:true,paid:false,status:rawStatus||"pending",account_closed:false});
     }
 
+    // Marca o pagamento local como pago antes da reconciliação.
+    await pool.query(
+      `update pix_payments set status='paid',updated_at=now() where id=$1`,
+      [p.id]
+    );
+
     // Fecha exatamente a comanda vinculada a este pagamento já confirmado.
+    // A rotina é idempotente: uma comanda já fechada não é fechada novamente.
     const result=await reconcilePaidPixAccounts();
 
     const account=(await pool.query(
