@@ -73,7 +73,7 @@ textarea{min-height:88px}
 .badgeClosed{display:inline-block;background:#12351f;color:#86efac;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:800}
 .billOrder{padding:10px 0;border-bottom:1px solid #2a2a2a}
 .billOrder:last-child{border-bottom:0}
-.paymentGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.paymentGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}
 .paymentGrid button{background:#232323;color:#fff;border:1px solid #3b3b3b}
  .paymentGrid button.selected{background:#ffbf00;color:#111;border-color:#ffbf00;font-weight:900}
 .cashSummary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
@@ -740,7 +740,6 @@ function closeAccountForm(accountId,tableNumber,total){
     '<div class="paymentGrid">'+
       '<button id="payPIX" onclick="selectPayment(\'PIX\')">PIX</button>'+
       '<button id="payDinheiro" onclick="selectPayment(\'Dinheiro\')">Dinheiro</button>'+
-      '<button id="payCartao" onclick="selectPayment(\'Cartão\')">Cartão</button>'+
     '</div>'+
     '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">Confirmar pagamento</button> '+
     '<button class="secondary" onclick="viewAccount('+tableNumber+')">Voltar</button>'
@@ -749,8 +748,8 @@ function closeAccountForm(accountId,tableNumber,total){
 
 function selectPayment(method){
   selectedPayment=method;
-  ["PIX","Dinheiro","Cartão"].forEach(x=>{
-    const id=x==="Cartão"?"payCartao":"pay"+x;
+  ["PIX","Dinheiro"].forEach(x=>{
+    const id="pay"+x;
     const el=$(id);
     if(el)el.classList.toggle("selected",x===method);
   });
