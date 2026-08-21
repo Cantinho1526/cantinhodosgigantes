@@ -735,7 +735,7 @@ async function viewAccount(tableNumber){
 async function cancelAccount(accountId,tableNumber){
   if(!confirm(
     "Cancelar a comanda da Mesa "+tableNumber+"?\n\n"+
-    "Esta ação NÃO registra pagamento. Os pedidos serão cancelados e, se houver estoque controlado, as quantidades serão devolvidas."
+    "Esta ação NÃO registra pagamento. Os pedidos serão cancelados e, se houver estoque controlado, as quantidades serão devolvidas. PIX pendente será invalidado; PIX já pago continuará protegido."
   ))return;
   try{
     const r=await api("/api/accounts/"+accountId+"/cancel",{
