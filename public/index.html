@@ -173,6 +173,7 @@ textarea{min-height:88px}
 .kitchenDeliver{background:#15803d;color:#fff;font-weight:900}
 .orderStatus{display:inline-block;margin-top:8px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900}
 .statusRecebido{background:#5b4500;color:#ffe18a}.statusPreparo{background:#173d74;color:#bfdbfe}.statusPronto{background:#14532d;color:#bbf7d0}.statusEntregue{background:#15351f;color:#86efac}.statusCancelado{background:#5f1515;color:#fecaca}
+.paymentConfirmedBadge{display:inline-flex;align-items:center;gap:6px;margin:8px 0 0;padding:6px 9px;border-radius:999px;background:#0f5132;color:#d1fae5;border:1px solid #16834f;font-size:12px;font-weight:900}
 
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
@@ -768,6 +769,11 @@ async function orders(){
         "Cancelado":"statusCancelado"
       }[o.status]||"";
 
+      const pixConfirmed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
+      const paymentBadge = pixConfirmed
+        ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • COMANDA PAGA</span></div>'
+        : '';
+
       let actions='';
       if(o.status==="Recebido"){
         actions='<button class="kitchenAccept" onclick="acceptOrder('+o.id+')">✅ ACEITAR PEDIDO</button>';
@@ -783,6 +789,7 @@ async function orders(){
         o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
         '<h3>'+R(o.total)+'</h3>'+
+        paymentBadge+
         '<span class="orderStatus '+statusClass+'">'+E(o.status)+'</span>'+
         (actions?'<div class="kitchenActions">'+actions+'</div>':'')+
       '</div>';
