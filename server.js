@@ -532,7 +532,15 @@ app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
 
 app.get("/api/orders",requireAdmin,async(req,res)=>{
   try{
-    const orders=(await pool.query("select * from orders order by id desc")).rows;
+    const orders=(await pool.query(`
+      select o.*,
+             a.status as account_status,
+             a.payment_method as account_payment_method,
+             a.closed_at as account_closed_at
+      from orders o
+      left join table_accounts a on a.id=o.account_id
+      order by o.id desc
+    `)).rows;
     for(const o of orders){
       o.items=(await pool.query(
         `select product_name name,quantity,unit_price
