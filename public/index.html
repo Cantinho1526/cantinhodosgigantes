@@ -175,6 +175,12 @@ textarea{min-height:88px}
 .statusRecebido{background:#5b4500;color:#ffe18a}.statusPreparo{background:#173d74;color:#bfdbfe}.statusPronto{background:#14532d;color:#bbf7d0}.statusEntregue{background:#15351f;color:#86efac}.statusCancelado{background:#5f1515;color:#fecaca}
 .paymentConfirmedBadge{display:inline-flex;align-items:center;gap:6px;margin:8px 0 0;padding:6px 9px;border-radius:999px;background:#0f5132;color:#d1fae5;border:1px solid #16834f;font-size:12px;font-weight:900}
 
+
+.kitchenAge{display:inline-block;margin-left:8px;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:900;vertical-align:middle}
+.ageToday{background:#123d24;color:#8ff0ad;border:1px solid #1b7040}
+.ageYesterday{background:#4a3c00;color:#ffe477;border:1px solid #806800}
+.ageRecent{background:#4a2600;color:#ffc078;border:1px solid #8b4b00}
+.ageOld{background:#4b1212;color:#ff9d9d;border:1px solid #8d2424}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -766,6 +772,20 @@ async function confirmCloseAccount(accountId,tableNumber){
 }
 
 
+function kitchenAgeInfo(createdAt){
+  const created=new Date(createdAt);
+  const ageMs=Date.now()-created.getTime();
+  const hours=ageMs/3600000;
+  if(hours>=48)return {cls:"ageOld",label:"🔴 PEDIDO ANTIGO"};
+  const now=new Date();
+  const startToday=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const startCreated=new Date(created.getFullYear(),created.getMonth(),created.getDate());
+  const days=Math.round((startToday-startCreated)/86400000);
+  if(days===0)return {cls:"ageToday",label:"🟢 HOJE"};
+  if(days===1)return {cls:"ageYesterday",label:"🟡 ONTEM"};
+  return {cls:"ageRecent",label:"🟠 RECENTE"};
+}
+
 async function orders(){
   try{
     const a=await api("/api/orders");
@@ -782,6 +802,7 @@ async function orders(){
         "Cancelado":"statusCancelado"
       }[o.status]||"";
 
+      const ageInfo=kitchenAgeInfo(o.created_at);
       const pixConfirmed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
       const paymentBadge = pixConfirmed
         ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • COMANDA PAGA</span></div>'
@@ -802,7 +823,7 @@ async function orders(){
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
         '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
-        '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+'</p>'+
+        '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+' <span class="kitchenAge '+ageInfo.cls+'">'+ageInfo.label+'</span></p>'+
         o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
         '<h3>'+R(o.total)+'</h3>'+
@@ -815,7 +836,7 @@ async function orders(){
     $("adminContent").innerHTML=
       '<div class="panel" id="ordersPanelMarker">'+
         '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
-        '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 Encerrar pedidos antigos</button></div></div>'+
+        '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 LIMPAR PEDIDOS ANTIGOS (48H+)</button></div></div>'+
         (active.length
           ? '<div class="orders" style="margin-top:14px">'+active.map(card).join("")+'</div>'
           : '<div class="empty">Nenhum pedido aguardando preparo.</div>')+
@@ -834,15 +855,15 @@ async function setStatus(id,status){
 
 
 async function cleanupOldOrders(){
-  if(!confirm("Encerrar pedidos antigos ligados a comandas que já foram fechadas? O histórico de vendas e pagamentos não será apagado."))return;
+  if(!confirm("Remover da fila TODOS os pedidos ativos com 48 horas ou mais?\n\nEles serão marcados como ENTREGUES somente para sair da cozinha. Histórico, vendas e pagamentos serão preservados."))return;
   try{
-    const r=await api("/api/admin/orders/cleanup-closed",{
+    const r=await api("/api/admin/orders/cleanup-old-48h",{
       method:"POST",
       headers:{"Content-Type":"application/json"}
     });
     alert(r.updated
-      ? r.updated+" pedido(s) antigo(s) foram encerrados."
-      : "Nenhum pedido antigo precisava ser encerrado.");
+      ? r.updated+" pedido(s) com 48 horas ou mais foram removidos da fila."
+      : "Nenhum pedido ativo com 48 horas ou mais foi encontrado.");
     newOrderQueue=newOrderQueue.filter(x=>!r.ids.includes(Number(x.id)));
     savePendingAlerts();
     if(!newOrderQueue.length)stopRepeatingAlert();
