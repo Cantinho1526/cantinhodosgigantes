@@ -608,10 +608,10 @@ async function dashboard(){
       '<div class="row"><div><h1 style="margin-bottom:4px">Painel administrativo</h1><div style="color:#aaa">Cantinho dos Gigantes</div></div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button id="adminAlertTestBtn" class="btn" onclick="testOrderAlert()">🔔 TESTAR ALERTA</button><button class="secondary" onclick="logout()">Sair</button></div></div>'+
       '<div class="stats">'+
-        '<div class="stat"><small>Pedidos</small><strong>'+s.orders+'</strong></div>'+
-        '<div class="stat"><small>Mesas abertas</small><strong>'+s.open_tables+'</strong></div>'+
-        '<div class="stat"><small>Em aberto</small><strong>'+R(s.open_total)+'</strong></div>'+
-        '<div class="stat"><small>Recebido</small><strong>'+R(s.paid_total)+'</strong></div>'+
+        '<div class="stat"><small>Pedidos</small><strong id="statOrders">'+s.orders+'</strong></div>'+
+        '<div class="stat"><small>Mesas abertas</small><strong id="statOpenTables">'+s.open_tables+'</strong></div>'+
+        '<div class="stat"><small>Em aberto</small><strong id="statOpenTotal">'+R(s.open_total)+'</strong></div>'+
+        '<div class="stat"><small>Recebido</small><strong id="statPaidTotal">'+R(s.paid_total)+'</strong></div>'+
       '</div>'+
       '<div class="tabs">'+
         '<button onclick="accounts()">🪑 Comandas</button>'+
@@ -643,6 +643,21 @@ function logout(){
 }
 
 
+
+async function refreshDashboardStats(){
+  try{
+    const s=await api("/api/stats");
+    const a=$("statOrders"),b=$("statOpenTables"),c=$("statOpenTotal"),d=$("statPaidTotal");
+    if(a)a.textContent=s.orders;
+    if(b)b.textContent=s.open_tables;
+    if(c)c.textContent=R(s.open_total);
+    if(d)d.textContent=R(s.paid_total);
+  }catch(e){
+    console.error("Atualização dos indicadores:",e);
+  }
+}
+
+
 async function accounts(){
   try{
     const a=await api("/api/accounts");
@@ -659,6 +674,7 @@ async function accounts(){
         '</div>'
       ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
       '</div>';
+    await refreshDashboardStats();
   }catch(e){alert(e.message)}
 }
 
