@@ -867,8 +867,84 @@ app.get("/api/accounts/table/:table",requireAdmin,async(req,res)=>{
   }
 });
 
+
+app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+
+    const account=(await c.query(
+      `select * from table_accounts where id=$1 and status='Aberta' for update`,
+      [Number(req.params.id)]
+    )).rows[0];
+
+    if(!account){
+      await c.query("rollback");
+      return res.status(404).json({error:"Comanda aberta não encontrada."});
+    }
+
+    const pix=(await c.query(
+      `select id,status from pix_payments
+       where account_id=$1
+         and lower(status) not in ('cancelled','canceled','rejected','expired')
+       order by id desc limit 1`,
+      [account.id]
+    )).rows[0];
+
+    if(pix){
+      await c.query("rollback");
+      return res.status(400).json({
+        error:"Esta comanda possui um PIX vinculado. Não é seguro cancelá-la por este botão."
+      });
+    }
+
+    const orders=(await c.query(
+      `select id from orders where account_id=$1 and status<>'Cancelado' order by id for update`,
+      [account.id]
+    )).rows;
+
+    for(const o of orders){
+      const items=(await c.query(`
+        select p.id,p.stock_quantity,oi.quantity
+        from order_items oi
+        join products p on p.id=oi.product_id
+        where oi.order_id=$1 and p.stock_control=true
+        for update
+      `,[o.id])).rows;
+
+      for(const x of items){
+        const previous=Number(x.stock_quantity||0);
+        const q=Number(x.quantity||0);
+        const updated=previous+q;
+        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
+        await c.query(`
+          insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+          values($1,'Cancelamento',$2,$3,$4,$5)
+        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • Mesa '+account.table_number]);
+      }
+      await c.query("update orders set status='Cancelado' where id=$1",[o.id]);
+    }
+
+    await c.query(`
+      update table_accounts
+      set status='Cancelada',payment_method=null,closed_at=now()
+      where id=$1
+    `,[account.id]);
+
+    await c.query("commit");
+    res.json({ok:true,account_id:account.id,table_number:account.table_number,cancelled_orders:orders.length,payment_method:null});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(500).json({error:e.message||"Erro ao cancelar a comanda."});
+  }finally{
+    c.release();
+  }
+});
+
+
 app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
-  const allowed=["PIX","Dinheiro","Cartão"];
+  const allowed=["PIX","Dinheiro"];
   const payment=String(req.body.payment_method||"");
   if(!allowed.includes(payment)){
     return res.status(400).json({error:"Forma de pagamento inválida."});
