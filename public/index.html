@@ -725,7 +725,33 @@ async function viewAccount(tableNumber){
       ).join("")+
       '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
       '<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> '+
+      '<button class="danger" onclick="cancelAccount('+account.id+','+tableNumber+')">🗑️ Cancelar comanda/teste</button> '+
       '<button class="secondary" onclick="closeModal()">Voltar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+
+async function cancelAccount(accountId,tableNumber){
+  if(!confirm(
+    "Cancelar a comanda da Mesa "+tableNumber+"?\n\n"+
+    "Esta ação NÃO registra pagamento. Os pedidos serão cancelados e, se houver estoque controlado, as quantidades serão devolvidas."
+  ))return;
+  try{
+    const r=await api("/api/accounts/"+accountId+"/cancel",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({})
+    });
+    modal(
+      '<div style="text-align:center">'+
+        '<div style="font-size:56px">🗑️</div>'+
+        '<h2>Comanda cancelada</h2>'+
+        '<p>Mesa '+r.table_number+' liberada.</p>'+
+        '<p><b>'+r.cancelled_orders+' pedido(s)</b> cancelado(s).</p>'+
+        '<p style="color:#aaa">Nenhum valor foi lançado em PIX ou Dinheiro.</p>'+
+        '<button class="btn" onclick="closeModal();accounts()">OK</button>'+
+      '</div>'
     );
   }catch(e){alert(e.message)}
 }
