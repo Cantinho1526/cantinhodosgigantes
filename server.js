@@ -883,19 +883,34 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
       return res.status(404).json({error:"Comanda aberta não encontrada."});
     }
 
-    const pix=(await c.query(
+    const pixRows=(await c.query(
       `select id,status from pix_payments
        where account_id=$1
-         and lower(status) not in ('cancelled','canceled','rejected','expired')
-       order by id desc limit 1`,
+       order by id desc
+       for update`,
       [account.id]
-    )).rows[0];
+    )).rows;
 
-    if(pix){
+    const paidPix=pixRows.find(p=>["paid","processed","approved"].includes(String(p.status||"").toLowerCase()));
+    if(paidPix){
       await c.query("rollback");
       return res.status(400).json({
-        error:"Esta comanda possui um PIX vinculado. Não é seguro cancelá-la por este botão."
+        error:"Esta comanda possui um PIX já pago/aprovado. O cancelamento foi bloqueado por segurança."
       });
+    }
+
+    const pendingPix=pixRows.filter(p=>
+      ["pending","action_required","processing"].includes(String(p.status||"").toLowerCase())
+    );
+
+    if(pendingPix.length){
+      await c.query(
+        `update pix_payments
+         set status='cancelled',updated_at=now()
+         where account_id=$1
+           and lower(status) in ('pending','action_required','processing')`,
+        [account.id]
+      );
     }
 
     const orders=(await c.query(
