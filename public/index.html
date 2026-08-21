@@ -437,6 +437,11 @@ function modal(html){
 function closeModal(){$("modal").classList.add("hidden")}
 
 async function client(){
+  // Ao sair do Admin, interrompe o monitoramento da cozinha para que
+  // rotinas administrativas não tentem atualizar elementos que não existem
+  // na tela do cliente.
+  stopOrderWatch();
+  dismissOrderAlert();
   setMode("client");
   M=await api("/api/menu");
   const mesa=new URLSearchParams(location.search).get("mesa");
@@ -682,7 +687,9 @@ async function accounts(){
   try{
     const a=await api("/api/accounts");
     const open=a.filter(x=>x.status==="Aberta");
-    $("adminContent").innerHTML=
+    const adminContent=$("adminContent");
+    if(!adminContent)return;
+    adminContent.innerHTML=
       '<div class="panel"><div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
       (open.length?'<div class="accountGrid">'+open.map(x=>
         '<div class="accountCard open">'+
@@ -833,7 +840,9 @@ async function orders(){
       '</div>';
     };
 
-    $("adminContent").innerHTML=
+    const adminContent=$("adminContent");
+    if(!adminContent)return;
+    adminContent.innerHTML=
       '<div class="panel" id="ordersPanelMarker">'+
         '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
         '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 LIMPAR PEDIDOS ANTIGOS (48H+)</button></div></div>'+
