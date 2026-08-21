@@ -302,6 +302,19 @@ async function kitchenStatus(id,status){
     await orders();
   }catch(e){alert(e.message)}
 }
+
+async function archiveKitchenOrder(id){
+  if(!confirm("Remover este pedido da fila da cozinha?\n\nEle será marcado como ENTREGUE apenas para sair da tela da cozinha. A comanda, o pagamento e o histórico financeiro NÃO serão apagados nem alterados."))return;
+  try{
+    await api("/api/orders/"+id,{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({status:"Entregue"})
+    });
+    removePendingOrder(id);
+    await orders();
+  }catch(e){alert(e.message)}
+}
 async function checkNewOrders(){
   if(!adminToken||orderWatchBusy)return;
   orderWatchBusy=true;
@@ -781,6 +794,10 @@ async function orders(){
         actions='<button class="kitchenReady" onclick="kitchenStatus('+o.id+',\'Pronto\')">🍳 MARCAR COMO PRONTO</button>';
       }else if(o.status==="Pronto"){
         actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
+      }
+
+      if(o.status!=="Entregue" && o.status!=="Cancelado"){
+        actions += '<button class="secondary" onclick="archiveKitchenOrder('+o.id+')">🧹 REMOVER DA FILA</button>';
       }
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
