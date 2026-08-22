@@ -67,6 +67,10 @@ textarea{min-height:88px}
 .productRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #2a2a2a}
 .productRow:last-child{border-bottom:0}
 .productActions{display:flex;gap:7px;flex-wrap:wrap}
+.adminProductSearch{display:flex;gap:8px;align-items:center;margin:12px 0 16px}
+.adminProductSearch input{flex:1}
+.adminProductSearch button{white-space:nowrap}
+
 
 .productPhotoAdmin{width:100%;max-width:360px;height:210px;object-fit:cover;border-radius:14px;border:1px solid #3b3b3b;background:#0b0b0b;display:block;margin:8px 0 10px}
 .photoHelp{font-size:12px;color:#aaa;margin-top:6px;line-height:1.4}
@@ -970,33 +974,64 @@ async function cleanupOldOrders(){
 async function products(){
   try{
     const a=await api("/api/admin/products");
+    const q=String(adminProductSearchTerm||"").trim().toLowerCase();
+    const visible=!q ? a : a.filter(p=>
+      String(p.name||"").toLowerCase().includes(q) ||
+      String(p.category||"").toLowerCase().includes(q) ||
+      String(p.description||"").toLowerCase().includes(q)
+    );
+
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
         '<div class="notice">📷 Para trocar uma foto: clique em <b>Editar</b> no produto e escolha a imagem diretamente do celular ou computador.</div>'+
-        a.map(p=>{
-          const price=Number(p.price||0);
-          const cost=Number(p.cost_price||0);
-          const profit=price-cost;
-          const margin=price>0?(profit/price)*100:0;
-          return '<div class="productRow">'+
-            '<div>'+
-              '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
-              '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
-              '<div style="font-size:13px;margin-top:4px">'+
-                '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
-                '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
-                '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
+        '<div class="adminProductSearch">'+
+          '<input id="adminProductSearch" type="search" placeholder="🔎 Buscar produto por nome, categoria ou descrição..." value="'+E(adminProductSearchTerm)+'" oninput="filterAdminProducts(this.value)">'+
+          (adminProductSearchTerm?'<button class="secondary" onclick="clearAdminProductSearch()">Limpar</button>':'')+
+        '</div>'+
+        '<div id="adminProductList">'+
+          (visible.length?visible.map(p=>{
+            const price=Number(p.price||0);
+            const cost=Number(p.cost_price||0);
+            const profit=price-cost;
+            const margin=price>0?(profit/price)*100:0;
+            return '<div class="productRow">'+
+              '<div>'+
+                '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
+                '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
+                '<div style="font-size:13px;margin-top:4px">'+
+                  '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
+                  '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
+                  '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
+                '</div>'+
               '</div>'+
-            '</div>'+
-            '<div class="productActions">'+
-              '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
-              '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
-            '</div>'+
-          '</div>';
-        }).join("")+
+              '<div class="productActions">'+
+                '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
+                '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
+              '</div>'+
+            '</div>';
+          }).join(""):'<div class="empty">Nenhum produto encontrado para esta busca.</div>')+
+        '</div>'+
       '</div>';
+
+    requestAnimationFrame(()=>{
+      const input=$("adminProductSearch");
+      if(input && adminProductSearchTerm){
+        input.focus();
+        input.setSelectionRange(input.value.length,input.value.length);
+      }
+    });
   }catch(e){alert(e.message)}
+}
+
+function filterAdminProducts(value){
+  adminProductSearchTerm=String(value||"");
+  products();
+}
+
+function clearAdminProductSearch(){
+  adminProductSearchTerm="";
+  products();
 }
 
 async function productForm(id){
@@ -1123,6 +1158,7 @@ async function deleteProduct(id,name){
   }catch(e){alert(e.message)}
 }
 
+let adminProductSearchTerm="";
 let stockLowOnly=false;
 
 async function stock(lowOnly){
