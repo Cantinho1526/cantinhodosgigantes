@@ -67,6 +67,12 @@ textarea{min-height:88px}
 .productRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #2a2a2a}
 .productRow:last-child{border-bottom:0}
 .productActions{display:flex;gap:7px;flex-wrap:wrap}
+
+.productPhotoAdmin{width:100%;max-width:360px;height:210px;object-fit:cover;border-radius:14px;border:1px solid #3b3b3b;background:#0b0b0b;display:block;margin:8px 0 10px}
+.photoHelp{font-size:12px;color:#aaa;margin-top:6px;line-height:1.4}
+.photoPicker{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.photoPicker input[type=file]{padding:9px;background:#0c0c0c;border:1px solid #3b3b3b;border-radius:9px;color:#fff}
+
 .qrGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
 .qrCard{background:#fff;color:#111;border-radius:15px;padding:15px;text-align:center}
 .qrCard img{width:180px;max-width:100%}.qrCard h3{margin:4px 0 10px}.qrCard p{font-size:12px;word-break:break-all}
@@ -967,6 +973,7 @@ async function products(){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
+        '<div class="notice">📷 Para trocar uma foto: clique em <b>Editar</b> no produto e escolha a imagem diretamente do celular ou computador.</div>'+
         a.map(p=>{
           const price=Number(p.price||0);
           const cost=Number(p.cost_price||0);
@@ -1010,13 +1017,79 @@ async function productForm(id){
       '</select></div>'+
       '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
       '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
-      '<div class="field"><label>URL da foto (opcional)</label><input id="pi" value="'+E(p.image||"")+'"></div>'+
+      '<div class="field">'+
+        '<label>📷 Foto do produto</label>'+
+        '<img id="productPhotoPreview" class="productPhotoAdmin" src="'+E(realFoodPhoto(p))+'" alt="Prévia da foto">'+
+        '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
+        '<div class="photoPicker">'+
+          '<input id="productPhotoFile" type="file" accept="image/jpeg,image/png,image/webp,image/*" onchange="chooseProductPhoto(this)">'+
+          '<button type="button" class="secondary" onclick="removeProductPhoto()">Remover foto personalizada</button>'+
+        '</div>'+
+        '<div class="photoHelp">Escolha uma foto do celular ou computador. O sistema reduz a imagem automaticamente para ficar leve. JPG, PNG ou WEBP são os formatos mais seguros.</div>'+
+      '</div>'+
       '<div class="field"><label><input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
       '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
   }catch(e){alert(e.message)}
+}
+
+
+function chooseProductPhoto(input){
+  const file=input.files&&input.files[0];
+  if(!file)return;
+
+  if(!String(file.type||"").startsWith("image/")){
+    alert("Escolha um arquivo de imagem.");
+    input.value="";
+    return;
+  }
+
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const maxW=900,maxH=700;
+        let w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+        const scale=Math.min(1,maxW/w,maxH/h);
+        w=Math.max(1,Math.round(w*scale));
+        h=Math.max(1,Math.round(h*scale));
+
+        const canvas=document.createElement("canvas");
+        canvas.width=w;canvas.height=h;
+        const ctx=canvas.getContext("2d");
+        ctx.drawImage(img,0,0,w,h);
+
+        // JPEG reduz bastante o tamanho e mantém boa qualidade para o cardápio.
+        const data=canvas.toDataURL("image/jpeg",0.78);
+        $("pi").value=data;
+        $("productPhotoPreview").style.display="block";
+        $("productPhotoPreview").src=data;
+      }catch(e){
+        alert("Não foi possível preparar esta foto. Tente uma imagem JPG ou PNG.");
+      }
+    };
+    img.onerror=()=>{
+      alert("Não foi possível abrir esta foto. Tente uma imagem JPG ou PNG.");
+      input.value="";
+    };
+    img.src=reader.result;
+  };
+  reader.onerror=()=>alert("Não foi possível ler a foto.");
+  reader.readAsDataURL(file);
+}
+
+function removeProductPhoto(){
+  $("pi").value="";
+  const preview=$("productPhotoPreview");
+  if(preview){
+    preview.removeAttribute("src");
+    preview.style.display="none";
+  }
+  const f=$("productPhotoFile");
+  if(f)f.value="";
 }
 
 async function saveProduct(id){
