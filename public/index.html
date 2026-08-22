@@ -18,6 +18,19 @@ button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
 .hero{background:radial-gradient(circle at 15% 10%,#2e2400 0,#151515 34%,#080808 75%);border:1px solid #604b00;border-radius:22px;padding:32px;box-shadow:0 10px 35px #0008}
 .hero h1{font-size:38px;margin:0 0 8px;color:#ffd34d}
 .hero p{color:#ddd;margin-bottom:6px}
+.heroLogo{
+  display:block;
+  width:min(220px,52vw);
+  height:auto;
+  max-height:180px;
+  object-fit:contain;
+  margin:0 auto 14px;
+  border-radius:50%;
+}
+@media(max-width:600px){
+  .hero{padding:20px 14px}
+  .heroLogo{width:min(160px,48vw);max-height:150px}
+}
 .tableTag{display:inline-block;background:#2a2100;color:#ffd34d;border:1px solid #765b00;padding:8px 12px;border-radius:999px;margin-top:8px;font-weight:800}
 .tabs{display:flex;gap:8px;overflow:auto;margin:18px 0;padding-bottom:4px}
 .tabs button{background:#181818;color:#ddd;border:1px solid #333;white-space:nowrap}
@@ -467,18 +480,44 @@ async function client(){
 function realFoodPhoto(p){
   if(p.image) return p.image;
   const t=((p.name||"")+" "+(p.description||"")+" "+(p.category||"")).toLowerCase();
-  const U="https://images.unsplash.com/", Q="?auto=format&fit=crop&w=900&q=82";
-  if(/lingui|calabresa|salsicha|churrasco|carne|espet/.test(t)) return U+"photo-1529692236671-f1f6cf9683ba"+Q;
-  if(/batata|frita|fritas/.test(t)) return U+"photo-1573080496219-bb080dd4f877"+Q;
+  const U="https://images.unsplash.com/", Q="?auto=format&fit=crop&w=900&h=650&q=82";
+
+  // Porções / pratos / espetos
+  if(/fritas.*bacon|batata.*bacon/.test(t)) return U+"photo-1573080496219-bb080dd4f877"+Q;
+  if(/mandioca|aipim|macaxeira/.test(t)) return U+"photo-1626082927389-6cd097cdc6ec"+Q;
+  if(/calabresa|lingui/.test(t)) return U+"photo-1529692236671-f1f6cf9683ba"+Q;
+  if(/p[aã]o de alho/.test(t)) return U+"photo-1573140247632-f8fd74997d5c"+Q;
+  if(/queijo/.test(t)) return U+"photo-1486297678162-eb2a19b0a32d"+Q;
+  if(/arroz.*vinagrete|farofa|prato.*arroz/.test(t)) return U+"photo-1547592180-85f173990554"+Q;
+  if(/amendoim/.test(t)) return U+"photo-1567892737950-30c4db37cd89"+Q;
+  if(/torcida|salgadinho|chips|lays/.test(t)) return U+"photo-1566478989037-eec170784d0b"+Q;
+  if(/espet|churrasco|carne/.test(t)) return U+"photo-1555939594-58d7cb561ad1"+Q;
+
+  // Drinks
+  if(/caipirinha/.test(t)) return U+"photo-1551024709-8f23befc6f87"+Q;
+  if(/gin.?t[oô]nica|gin tonic/.test(t)) return U+"photo-1551538827-9c037cb4f32a"+Q;
+  if(/aperol/.test(t)) return U+"photo-1551024709-8f23befc6f87"+Q;
+  if(/drink/.test(t)) return U+"photo-1513558161293-cdaf765ed2fd"+Q;
+
+  // Bebidas sem álcool
+  if(/[aá]gua de coco|coco/.test(t)) return U+"photo-1520342868574-5fa3804e551c"+Q;
+  if(/gatorade|isot[oô]nico/.test(t)) return U+"photo-1594736797933-d0501ba2fe65"+Q;
+  if(/yakult|probi[oó]tico/.test(t)) return U+"photo-1621939514649-280e2aa9454f"+Q;
+  if(/[aá]gua com g[aá]s/.test(t)) return U+"photo-1523362628745-0c100150b504"+Q;
+  if(/(^|\s)[aá]gua(\s|$)|mineral/.test(t)) return U+"photo-1548839140-29a749e1cf4d"+Q;
+  if(/suco|detox/.test(t)) return U+"photo-1600271886742-f049cd451bba"+Q;
+  if(/refrigerante|coca|guaran[aá]/.test(t)) return U+"photo-1581636625402-29b2a704ef13"+Q;
+
+  // Lanches / doces / café
   if(/p[aã]o|baguete|sandu|lanche|torrada/.test(t)) return U+"photo-1528735602780-2552fd46c7af"+Q;
-  if(/bolo|cake|doce|sobremesa|kit.?kat|chocolate/.test(t)) return U+"photo-1578985545062-69928b1d9587"+Q;
+  if(/bolo|cake/.test(t)) return U+"photo-1578985545062-69928b1d9587"+Q;
+  if(/kit.?kat|chocolate/.test(t)) return U+"photo-1575377427642-087cf684f29d"+Q;
   if(/caf[eé]|cappuccino/.test(t)) return U+"photo-1495474472287-4d71bcdd2085"+Q;
-  if(/suco|detox|guaraviton|bebida|refrigerante|[aá]gua|whey|beats/.test(t)) return U+"photo-1600271886742-f049cd451bba"+Q;
-  if(/pizza/.test(t)) return U+"photo-1574071318508-1cdbab80d002"+Q;
-  if(/hamb|burger/.test(t)) return U+"photo-1568901346375-23c9450c58cd"+Q;
+  if(/whey|protein/.test(t)) return U+"photo-1593095948071-474c5cc2989d"+Q;
+
+  // Fallback neutro de comida real
   return U+"photo-1504674900247-0877df9cc836"+Q;
 }
-
 function renderMenu(){
   const products=M.products.filter(p=>C==="Todos"||p.category===C);
   $("products").innerHTML=products.map(p=>{
