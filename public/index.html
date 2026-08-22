@@ -448,6 +448,7 @@ async function client(){
 
   $("app").innerHTML=
     '<section class="hero">'+
+      '<img class="heroLogo" src="/logo-gigantes.png" alt="Gigantes do Tênis">'+
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
       (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':'')+
@@ -463,12 +464,27 @@ async function client(){
   renderMenu();
 }
 
+function realFoodPhoto(p){
+  if(p.image) return p.image;
+  const t=((p.name||"")+" "+(p.description||"")+" "+(p.category||"")).toLowerCase();
+  const U="https://images.unsplash.com/", Q="?auto=format&fit=crop&w=900&q=82";
+  if(/lingui|calabresa|salsicha|churrasco|carne|espet/.test(t)) return U+"photo-1529692236671-f1f6cf9683ba"+Q;
+  if(/batata|frita|fritas/.test(t)) return U+"photo-1573080496219-bb080dd4f877"+Q;
+  if(/p[aã]o|baguete|sandu|lanche|torrada/.test(t)) return U+"photo-1528735602780-2552fd46c7af"+Q;
+  if(/bolo|cake|doce|sobremesa|kit.?kat|chocolate/.test(t)) return U+"photo-1578985545062-69928b1d9587"+Q;
+  if(/caf[eé]|cappuccino/.test(t)) return U+"photo-1495474472287-4d71bcdd2085"+Q;
+  if(/suco|detox|guaraviton|bebida|refrigerante|[aá]gua|whey|beats/.test(t)) return U+"photo-1600271886742-f049cd451bba"+Q;
+  if(/pizza/.test(t)) return U+"photo-1574071318508-1cdbab80d002"+Q;
+  if(/hamb|burger/.test(t)) return U+"photo-1568901346375-23c9450c58cd"+Q;
+  return U+"photo-1504674900247-0877df9cc836"+Q;
+}
+
 function renderMenu(){
   const products=M.products.filter(p=>C==="Todos"||p.category===C);
   $("products").innerHTML=products.map(p=>{
     const soldOut=Boolean(p.stock_control)&&Number(p.stock_quantity)<=0;
     return '<article class="card">'+
-      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'">':E(p.emoji))+'</div>'+
+      '<div class="pic"><img loading="lazy" src="'+E(realFoodPhoto(p))+'" alt="'+E(p.name)+'"></div>'+
       '<div class="cardBody">'+
         '<h3>'+E(p.name)+'</h3>'+
         '<p>'+E(p.description)+'</p>'+
