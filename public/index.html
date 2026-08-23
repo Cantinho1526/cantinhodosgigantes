@@ -204,6 +204,7 @@ textarea{min-height:88px}
 .ageYesterday{background:#4a3c00;color:#ffe477;border:1px solid #806800}
 .ageRecent{background:#4a2600;color:#ffc078;border:1px solid #8b4b00}
 .ageOld{background:#4b1212;color:#ff9d9d;border:1px solid #8d2424}
+.accountSearch{display:flex;gap:8px;align-items:center;margin:12px 0 16px}.accountSearch input{flex:1}.accountType{font-size:12px;color:#aaa;margin-top:4px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -748,58 +749,76 @@ async function refreshDashboardStats(){
 }
 
 
+let accountSearchTerm="";
 async function accounts(){
   try{
     const a=await api("/api/accounts");
     const open=a.filter(x=>x.status==="Aberta");
-    const adminContent=$("adminContent");
-    if(!adminContent)return;
+    const q=String(accountSearchTerm||"").trim().toLowerCase();
+    const visible=!q?open:open.filter(x=>{
+      const label=x.account_type==="Avulsa"?(x.customer_name||""):("mesa "+x.table_number);
+      return label.toLowerCase().includes(q);
+    });
+    const adminContent=$("adminContent"); if(!adminContent)return;
     adminContent.innerHTML=
-      '<div class="panel"><div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
-      (open.length?'<div class="accountGrid">'+open.map(x=>
-        '<div class="accountCard open">'+
-          '<span class="badgeOpen">ABERTA</span>'+
-          '<h3>Mesa '+x.table_number+'</h3>'+
-          '<div>'+x.order_count+' pedido(s)</div>'+
-          '<div class="accountTotal">'+R(x.total)+'</div>'+
-          '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
-        '</div>'
-      ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
+      '<div class="panel">'+
+        '<div class="row"><h2>Comandas abertas</h2><div><span class="badgeOpen">'+open.length+' abertas</span> <button class="btn" onclick="newLooseAccount()">+ Comanda avulsa</button></div></div>'+
+        '<div class="notice">Use <b>Comanda avulsa</b> para clientes sem mesa. Pode identificar pelo nome, quadra ou outro nome fácil.</div>'+
+        '<div class="accountSearch"><input type="search" placeholder="🔎 Buscar mesa ou comanda..." value="'+E(accountSearchTerm)+'" oninput="accountSearchTerm=this.value;accounts()">'+(accountSearchTerm?'<button class="secondary" onclick="accountSearchTerm=\'\';accounts()">Limpar</button>':'')+'</div>'+
+        (visible.length?'<div class="accountGrid">'+visible.map(x=>{
+          const av=x.account_type==="Avulsa";
+          return '<div class="accountCard open"><span class="badgeOpen">ABERTA</span>'+
+            '<h3>'+(av?'👤 '+E(x.customer_name||('Comanda #'+x.id)):'🪑 Mesa '+x.table_number)+'</h3>'+
+            '<div class="accountType">'+(av?'COMANDA AVULSA':'MESA')+'</div>'+
+            '<div>'+x.order_count+' pedido(s)</div><div class="accountTotal">'+R(x.total)+'</div>'+
+            '<button class="btn" onclick="viewAccountById('+x.id+')">Ver comanda</button></div>';
+        }).join('')+'</div>':'<div class="empty">Nenhuma comanda encontrada.</div>')+
       '</div>';
     await refreshDashboardStats();
   }catch(e){alert(e.message)}
 }
 
-async function viewAccount(tableNumber){
-  try{
-    const data=await api("/api/accounts/table/"+tableNumber);
-    if(!data.open){alert("Esta mesa não possui comanda aberta.");accounts();return}
-
-    const account=data.account;
-    modal(
-      '<h2>🪑 Comanda — Mesa '+tableNumber+'</h2>'+
-      '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
-      data.orders.map(o=>
-        '<div class="billOrder">'+
-          '<b>Pedido #'+o.id+'</b> • '+new Date(o.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+
-          (o.status==="Cancelado"?'<div style="color:#fca5a5">CANCELADO</div>':'')+
-          '<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+
-          (o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+
-          '<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div>'+
-        '</div>'
-      ).join("")+
-      '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
-      '<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> '+
-      '<button class="danger" onclick="cancelAccount('+account.id+','+tableNumber+')">🗑️ Cancelar comanda/teste</button> '+
-      '<button class="secondary" onclick="closeModal()">Voltar</button>'
-    );
-  }catch(e){alert(e.message)}
+function newLooseAccount(){
+  modal('<h2>👤 Nova comanda avulsa</h2><p>Use quando o cliente estiver sem mesa.</p><div class="field"><label>Nome / identificação</label><input id="looseAccountName" placeholder="Ex.: Sandra, João, Quadra 2"></div><button class="btn" onclick="createLooseAccount()">Criar comanda</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+  setTimeout(()=>{const x=$("looseAccountName");if(x)x.focus()},50);
+}
+async function createLooseAccount(){
+  const name=String($("looseAccountName")?.value||"").trim();
+  if(!name)return alert("Digite um nome ou identificação.");
+  try{const r=await api("/api/accounts/avulsa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customer_name:name})});closeModal();viewAccountById(r.account.id)}catch(e){alert(e.message)}
 }
 
+async function viewAccount(tableNumber){
+  try{const d=await api("/api/accounts/table/"+tableNumber);if(!d.open){alert("Esta mesa não possui comanda aberta.");accounts();return}viewAccountById(d.account.id)}catch(e){alert(e.message)}
+}
+async function viewAccountById(accountId){
+  try{
+    const data=await api("/api/accounts/"+accountId);if(!data.open){alert("Esta comanda não está aberta.");accounts();return}
+    const account=data.account,av=account.account_type==="Avulsa";
+    const title=av?('👤 Comanda — '+E(account.customer_name||('#'+account.id))):('🪑 Comanda — Mesa '+account.table_number);
+    modal(titleAccountHtml(title,account,data,av));
+  }catch(e){alert(e.message)}
+}
+function titleAccountHtml(title,account,data,av){
+  return '<h2>'+title+'</h2><div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
+    (data.orders.length?data.orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b> • '+new Date(o.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+(o.status==="Cancelado"?'<div style="color:#fca5a5">CANCELADO</div>':'')+'<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+(o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+'<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div></div>').join(''):'<div class="empty">Nenhum pedido lançado ainda.</div>')+
+    '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
+    '<button class="btn" onclick="addLooseOrderForm('+account.id+')">+ Adicionar pedido</button> '+
+    (data.total>0?'<button class="btn" onclick="closeAccountForm('+account.id+','+account.table_number+','+data.total+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">Fechar conta</button> ':'')+
+    '<button class="danger" onclick="cancelAccount('+account.id+','+account.table_number+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">🗑️ Cancelar comanda/teste</button> <button class="secondary" onclick="closeModal();accounts()">Voltar</button>';
+}
+let looseOrderItems=[];
+async function addLooseOrderForm(accountId){
+  try{const m=await api("/api/menu");looseOrderItems=[];modal('<h2>Adicionar pedido</h2><div class="field"><label>Produto</label><select id="looseProduct">'+m.products.map(p=>'<option value="'+p.id+'">'+E(p.name)+' — '+R(p.price)+'</option>').join('')+'</select></div><div class="field"><label>Quantidade</label><input id="looseQty" type="number" min="1" value="1"></div><button class="btn" onclick="addLooseItem('+accountId+')">Adicionar item</button><div id="looseItemsBox"></div><div class="field"><label>Observação</label><textarea id="looseObs" placeholder="Opcional"></textarea></div><button class="btn" onclick="saveLooseOrder('+accountId+')">Enviar para cozinha</button> <button class="secondary" onclick="viewAccountById('+accountId+')">Voltar</button>')}catch(e){alert(e.message)}
+}
+function addLooseItem(accountId){const id=Number($("looseProduct").value),q=Math.max(1,Number($("looseQty").value||1));const name=$("looseProduct").selectedOptions[0].textContent;const x=looseOrderItems.find(i=>i.product_id===id);x?x.quantity+=q:looseOrderItems.push({product_id:id,quantity:q,name});renderLooseItems()}
+function renderLooseItems(){const b=$("looseItemsBox");if(b)b.innerHTML=looseOrderItems.length?'<div class="notice">'+looseOrderItems.map(i=>i.quantity+'x '+E(i.name)).join('<br>')+'</div>':'<div class="empty">Nenhum item adicionado.</div>'}
+async function saveLooseOrder(accountId){if(!looseOrderItems.length)return alert("Adicione pelo menos um item.");try{await api("/api/accounts/"+accountId+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:looseOrderItems.map(({product_id,quantity})=>({product_id,quantity})),observation:$("looseObs")?.value||""})});alert("Pedido enviado para a cozinha.");viewAccountById(accountId)}catch(e){alert(e.message)}}
 
-async function cancelAccount(accountId,tableNumber){
+
+async function cancelAccount(accountId,tableNumber,customerName=""){
   if(!confirm(
-    "Cancelar a comanda da Mesa "+tableNumber+"?\n\n"+
+    "Cancelar a comanda "+(customerName?("de "+customerName):("da Mesa "+tableNumber))+"?\n\n"+
     "Esta ação NÃO registra pagamento. Os pedidos serão cancelados e, se houver estoque controlado, as quantidades serão devolvidas. PIX pendente será invalidado; PIX já pago continuará protegido."
   ))return;
   try{
@@ -812,7 +831,7 @@ async function cancelAccount(accountId,tableNumber){
       '<div style="text-align:center">'+
         '<div style="font-size:56px">🗑️</div>'+
         '<h2>Comanda cancelada</h2>'+
-        '<p>Mesa '+r.table_number+' liberada.</p>'+
+        '<p>'+(customerName?('Comanda de '+E(customerName)+' encerrada.'):('Mesa '+r.table_number+' liberada.'))+'</p>'+
         '<p><b>'+r.cancelled_orders+' pedido(s)</b> cancelado(s).</p>'+
         '<p style="color:#aaa">Nenhum valor foi lançado em PIX ou Dinheiro.</p>'+
         '<button class="btn" onclick="closeModal();accounts()">OK</button>'+
@@ -822,10 +841,10 @@ async function cancelAccount(accountId,tableNumber){
 }
 
 let selectedPayment="";
-function closeAccountForm(accountId,tableNumber,total){
+function closeAccountForm(accountId,tableNumber,total,customerName=""){
   selectedPayment="";
   modal(
-    '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
+    '<h2>Fechar conta — '+(customerName?E(customerName):('Mesa '+tableNumber))+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
     '<p>Escolha a forma de pagamento:</p>'+
     '<div class="paymentGrid">'+
