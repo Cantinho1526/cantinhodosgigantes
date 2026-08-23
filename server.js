@@ -539,7 +539,9 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
       select o.*,
              a.status as account_status,
              a.payment_method as account_payment_method,
-             a.closed_at as account_closed_at
+             a.closed_at as account_closed_at,
+             a.account_type as account_type,
+             a.customer_name as customer_name
       from orders o
       left join table_accounts a on a.id=o.account_id
       order by o.id desc
