@@ -92,6 +92,9 @@ async function init(){
       closed_at timestamptz
     );
 
+    ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS account_type text NOT NULL DEFAULT 'Mesa';
+    ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS customer_name text DEFAULT '';
+
     CREATE TABLE IF NOT EXISTS orders(
       id serial primary key,
       table_number int not null,
@@ -811,7 +814,7 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
       select
-        a.id,a.table_number,a.status,a.payment_method,a.opened_at,a.closed_at,
+        a.id,a.table_number,a.account_type,a.customer_name,a.status,a.payment_method,a.opened_at,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
         count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
@@ -867,6 +870,70 @@ app.get("/api/accounts/table/:table",requireAdmin,async(req,res)=>{
   }
 });
 
+
+app.get("/api/accounts/:id",requireAdmin,async(req,res)=>{
+  try{
+    const id=Number(req.params.id);
+    const account=(await pool.query(`select * from table_accounts where id=$1`,[id])).rows[0];
+    if(!account)return res.status(404).json({error:"Comanda não encontrada."});
+    const orders=(await pool.query(`select * from orders where account_id=$1 order by id`,[id])).rows;
+    let total=0;
+    for(const o of orders){
+      o.items=(await pool.query(`select product_name name,quantity,unit_price from order_items where order_id=$1 order by id`,[o.id])).rows;
+      if(o.status!=="Cancelado")total+=Number(o.total);
+    }
+    res.json({open:account.status==="Aberta",account,orders,total});
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar comanda."})}
+});
+
+app.post("/api/accounts/avulsa",requireAdmin,async(req,res)=>{
+  const name=String(req.body.customer_name||"").trim();
+  if(!name)return res.status(400).json({error:"Digite o nome ou identificação da comanda."});
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const seq=(await c.query(`select nextval(pg_get_serial_sequence('table_accounts','id'))::int id`)).rows[0].id;
+    const account=(await c.query(`
+      insert into table_accounts(id,table_number,account_type,customer_name,status)
+      values($1,$2,'Avulsa',$3,'Aberta') returning *
+    `,[seq,-seq,name])).rows[0];
+    await c.query("commit");
+    res.json({ok:true,account});
+  }catch(e){try{await c.query("rollback")}catch(_e){};console.error(e);res.status(500).json({error:"Erro ao criar comanda avulsa."})}
+  finally{c.release()}
+});
+
+app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
+  const items=Array.isArray(req.body.items)?req.body.items:[];
+  const observation=String(req.body.observation||"");
+  if(!items.length)return res.status(400).json({error:"Adicione pelo menos um produto."});
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const account=(await c.query(`select * from table_accounts where id=$1 and status='Aberta' for update`,[Number(req.params.id)])).rows[0];
+    if(!account)throw Error("Comanda aberta não encontrada.");
+    let total=0; const normalized=[];
+    for(const item of items){
+      const quantity=Math.max(1,Math.floor(Number(item.quantity||1)));
+      const r=await c.query("select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(item.product_id)]);
+      if(!r.rowCount)throw Error("Produto inválido.");
+      const p=r.rows[0],price=Number(p.price),cost=Number(p.cost_price||0);
+      if(p.stock_control&&Number(p.stock_quantity)<quantity)throw Error(`Estoque insuficiente para ${p.name}. Disponível: ${p.stock_quantity}`);
+      total+=price*quantity; normalized.push({p,quantity,price,cost});
+    }
+    const order=(await c.query(`insert into orders(account_id,table_number,status,observation,total) values($1,$2,'Recebido',$3,$4) returning id`,[account.id,account.table_number,observation,total])).rows[0];
+    for(const x of normalized){
+      await c.query(`insert into order_items(order_id,product_id,product_name,quantity,unit_price,unit_cost) values($1,$2,$3,$4,$5,$6)`,[order.id,x.p.id,x.p.name,x.quantity,x.price,x.cost]);
+      if(x.p.stock_control){
+        const previous=Number(x.p.stock_quantity||0),next=previous-x.quantity;
+        await c.query("update products set stock_quantity=$1 where id=$2",[next,x.p.id]);
+        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note) values($1,'Venda',$2,$3,$4,$5)`,[x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
+      }
+    }
+    await c.query("commit");res.json({ok:true,id:order.id,total});
+  }catch(e){try{await c.query("rollback")}catch(_e){};console.error(e);res.status(400).json({error:e.message||"Erro ao lançar pedido."})}
+  finally{c.release()}
+});
 
 app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
   const c=await pool.connect();
@@ -935,7 +1002,7 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
         await c.query(`
           insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
           values($1,'Cancelamento',$2,$3,$4,$5)
-        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • Mesa '+account.table_number]);
+        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
       }
       await c.query("update orders set status='Cancelado' where id=$1",[o.id]);
     }
