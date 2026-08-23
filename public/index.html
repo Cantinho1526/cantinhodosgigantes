@@ -291,7 +291,7 @@ function showOrderAlert(o,isTest=false){
   const items=(o.items||[]).map(i=>i.quantity+'x '+E(i.name)).join(' • ');
   div.innerHTML=
     '<h3>🔔 '+(isTest?'TESTE DO ALERTA':'NOVO PEDIDO!')+'</h3>'+
-    '<p><b>Pedido #'+E(o.id)+' • Mesa '+E(o.table_number)+'</b></p>'+
+    '<p><b>Pedido #'+E(o.id)+' • '+E(kitchenOrigin(o))+'</b></p>'+
     '<p>'+items+'</p>'+
     '<div class="row">'+
       (isTest
@@ -425,6 +425,14 @@ function testOrderAlert(){
 const $=x=>document.getElementById(x);
 const R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+
+function kitchenOrigin(o){
+  if(o && o.account_type==="Avulsa"){
+    const name=String(o.customer_name||"").trim();
+    return "👤 "+(name||("Comanda #"+(o.account_id||"")));
+  }
+  return "Mesa "+String(o&&o.table_number);
+}
 
 async function api(url,opts={}){
   const headers={...(opts.headers||{})};
@@ -938,7 +946,7 @@ async function orders(){
       }
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
-        '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
+        '<h3>#'+o.id+' — '+E(kitchenOrigin(o))+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
         '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+' <span class="kitchenAge '+ageInfo.cls+'">'+ageInfo.label+'</span></p>'+
         o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
