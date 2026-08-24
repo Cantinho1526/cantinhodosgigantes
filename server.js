@@ -10,6 +10,13 @@ const ADMIN_PIN=process.env.ADMIN_PIN||"1234";
 const MP_ACCESS_TOKEN=process.env.MP_ACCESS_TOKEN||"";
 const TABLE_QR_SECRET=process.env.TABLE_QR_SECRET||ADMIN_PIN;
 
+if(!process.env.ADMIN_PIN){
+  console.warn("⚠️ SEGURANÇA: ADMIN_PIN não configurado no ambiente. Configure uma senha forte no Render antes do uso público.");
+}
+if(!process.env.TABLE_QR_SECRET){
+  console.warn("⚠️ SEGURANÇA: TABLE_QR_SECRET não configurado; usando ADMIN_PIN como segredo dos QR Codes.");
+}
+
 if(!process.env.DATABASE_URL){
   console.error("DATABASE_URL ausente");
   process.exit(1);
@@ -310,9 +317,19 @@ async function reconcilePaidPixAccounts(){
 }
 
 async function getOrCreateOpenAccount(client,tableNumber){
+  // Serializa a criação da comanda por mesa para evitar duas comandas abertas
+  // quando dois pedidos chegam praticamente ao mesmo tempo.
+  await client.query("select pg_advisory_xact_lock($1)",[tableNumber]);
+
+  const tableExists=await client.query(
+    "select 1 from tables_restaurant where number=$1 limit 1",
+    [tableNumber]
+  );
+  if(!tableExists.rowCount)throw Error("Mesa não cadastrada.");
+
   let r=await client.query(
     `select * from table_accounts
-     where table_number=$1 and status='Aberta'
+     where table_number=$1 and status='Aberta' and account_type='Mesa'
      order by id desc limit 1
      for update`,
     [tableNumber]
@@ -320,18 +337,47 @@ async function getOrCreateOpenAccount(client,tableNumber){
   if(r.rowCount)return r.rows[0];
 
   r=await client.query(
-    `insert into table_accounts(table_number,status)
-     values($1,'Aberta')
+    `insert into table_accounts(table_number,status,account_type,customer_name)
+     values($1,'Aberta','Mesa','')
      returning *`,
     [tableNumber]
   );
   return r.rows[0];
 }
 
+const adminLoginAttempts=new Map();
+function adminLoginKey(req){
+  return String(req.headers["x-forwarded-for"]||req.ip||"unknown").split(",")[0].trim();
+}
+function adminLoginBlocked(req){
+  const key=adminLoginKey(req),now=Date.now();
+  const state=adminLoginAttempts.get(key);
+  if(!state)return {blocked:false,key};
+  if(now-state.first>15*60*1000){adminLoginAttempts.delete(key);return {blocked:false,key};}
+  return {blocked:state.count>=8,key,retry_ms:Math.max(0,15*60*1000-(now-state.first))};
+}
+function recordAdminLoginFailure(key){
+  const now=Date.now(),state=adminLoginAttempts.get(key);
+  if(!state||now-state.first>15*60*1000)adminLoginAttempts.set(key,{count:1,first:now});
+  else {state.count++;adminLoginAttempts.set(key,state);}
+}
+function clearAdminLoginFailures(key){adminLoginAttempts.delete(key);}
+
 app.post("/api/admin/login",(req,res)=>{
-  if(String(req.body.pin||"")!==ADMIN_PIN){
+  const attempt=adminLoginBlocked(req);
+  if(attempt.blocked){
+    res.set("Retry-After",String(Math.ceil(attempt.retry_ms/1000)));
+    return res.status(429).json({error:"Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente."});
+  }
+  const supplied=String(req.body.pin||"");
+  const a=Buffer.from(supplied);
+  const b=Buffer.from(String(ADMIN_PIN));
+  const same=a.length===b.length && crypto.timingSafeEqual(a,b);
+  if(!same){
+    recordAdminLoginFailure(attempt.key);
     return res.status(401).json({error:"Senha incorreta."});
   }
+  clearAdminLoginFailures(attempt.key);
   const token=createAdminToken();
   res.json({ok:true,token,expires_in_hours:ADMIN_SESSION_HOURS});
 });
@@ -362,9 +408,13 @@ app.get("/api/menu",async(req,res)=>{
 app.post("/api/orders",async(req,res)=>{
   const {table,items,observation=""}=req.body;
   const tableNumber=Number(table);
+  const accessToken=String(req.body.access_token||req.body.token||"");
 
   if(!Number.isInteger(tableNumber)||tableNumber<1||!Array.isArray(items)||!items.length){
     return res.status(400).json({error:"Pedido inválido."});
+  }
+  if(!validTableAccess(tableNumber,accessToken)){
+    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
   }
 
   const c=await pool.connect();
@@ -541,7 +591,12 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
              a.payment_method as account_payment_method,
              a.closed_at as account_closed_at,
              a.account_type as account_type,
-             a.customer_name as customer_name
+             a.customer_name as customer_name,
+             exists(
+               select 1 from pix_payments pp
+               where pp.account_id=o.account_id
+                 and lower(pp.status) in ('paid','processed','approved')
+             ) as pix_verified
       from orders o
       left join table_accounts a on a.id=o.account_id
       order by o.id desc
@@ -1028,10 +1083,9 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
 
 
 app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
-  const allowed=["PIX","Dinheiro"];
   const payment=String(req.body.payment_method||"");
-  if(!allowed.includes(payment)){
-    return res.status(400).json({error:"Forma de pagamento inválida."});
+  if(payment!=="PIX"){
+    return res.status(400).json({error:"Este sistema aceita fechamento somente em PIX."});
   }
 
   const c=await pool.connect();
@@ -1139,6 +1193,11 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
   try{
     const tableNumber=Number(req.params.table);
+    if(!Number.isInteger(tableNumber)||tableNumber<1){
+      return res.status(400).json({error:"Mesa inválida."});
+    }
+    const exists=(await pool.query("select 1 from tables_restaurant where number=$1 limit 1",[tableNumber])).rowCount;
+    if(!exists)return res.status(404).json({error:"Mesa não cadastrada."});
     const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(tableNumber)}&t=${tableAccessToken(tableNumber)}`;
     const png=await QRCode.toDataURL(url,{width:700,margin:2});
     res.json({url,png});
@@ -1173,24 +1232,24 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
       select * from cash_sessions where status='Aberto' order by id desc limit 1
     `)).rows[0]||null;
 
-    let summary={pix:0,dinheiro:0,cartao:0,sales_total:0,count:0};
+    let summary={pix:0,sales_total:0,count:0};
     if(session){
       const r=(await pool.query(`
         select
-          coalesce(sum(x.total) filter(where x.payment_method='PIX'),0)::numeric pix,
-          coalesce(sum(x.total) filter(where x.payment_method='Dinheiro'),0)::numeric dinheiro,
-          coalesce(sum(x.total) filter(where x.payment_method='Cartão'),0)::numeric cartao,
+          coalesce(sum(x.total),0)::numeric pix,
           coalesce(sum(x.total),0)::numeric sales_total,
           count(*)::int count
         from (
-          select a.id,a.payment_method,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+          select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
           from table_accounts a
           left join orders o on o.account_id=a.id
-          where a.status='Fechada' and a.closed_at>= $1
+          where a.status='Fechada'
+            and a.payment_method='PIX'
+            and a.closed_at>= $1
           group by a.id
         ) x
       `,[session.opened_at])).rows[0];
-      summary={pix:Number(r.pix),dinheiro:Number(r.dinheiro),cartao:Number(r.cartao),sales_total:Number(r.sales_total),count:r.count};
+      summary={pix:Number(r.pix),sales_total:Number(r.sales_total),count:r.count};
     }
     res.json({session,summary});
   }catch(e){
@@ -1200,8 +1259,7 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
 });
 
 app.post("/api/cash/open",requireAdmin,async(req,res)=>{
-  const opening=Number(req.body.opening_amount||0);
-  if(!Number.isFinite(opening)||opening<0)return res.status(400).json({error:"Valor inicial inválido."});
+  const opening=0;
   try{
     const exists=(await pool.query("select id from cash_sessions where status='Aberto' limit 1")).rowCount;
     if(exists)return res.status(400).json({error:"Já existe um caixa aberto."});
@@ -1216,31 +1274,46 @@ app.post("/api/cash/open",requireAdmin,async(req,res)=>{
 });
 
 app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
-  const closing=Number(req.body.closing_amount);
-  if(!Number.isFinite(closing)||closing<0)return res.status(400).json({error:"Informe o valor contado no caixa."});
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const session=(await c.query(`select * from cash_sessions where id=$1 and status='Aberto' for update`,[Number(req.params.id)])).rows[0];
-    if(!session){await c.query("rollback");return res.status(404).json({error:"Caixa aberto não encontrado."});}
+    const session=(await c.query(
+      `select * from cash_sessions where id=$1 and status='Aberto' for update`,
+      [Number(req.params.id)]
+    )).rows[0];
+    if(!session){
+      await c.query("rollback");
+      return res.status(404).json({error:"Caixa aberto não encontrado."});
+    }
+
+    // O servidor é a fonte de verdade do fechamento: soma somente contas PIX
+    // realmente fechadas durante esta sessão. O navegador não informa o total.
     const r=(await c.query(`
       select coalesce(sum(x.total),0)::numeric total
       from (
-        select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
-        from table_accounts a left join orders o on o.account_id=a.id
-        where a.status='Fechada' and a.closed_at>= $1 and a.payment_method='Dinheiro'
+        select a.id,
+               coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and a.payment_method='PIX'
+          and a.closed_at>= $1
         group by a.id
       ) x
     `,[session.opened_at])).rows[0];
-    const expected=Number(session.opening_amount)+Number(r.total);
+
+    const received=Number(r.total);
     const row=(await c.query(`
-      update cash_sessions set status='Fechado',closed_at=now(),closing_amount=$1,expected_amount=$2,notes=$3
-      where id=$4 returning *
-    `,[closing,expected,String(req.body.notes||""),session.id])).rows[0];
+      update cash_sessions
+      set status='Fechado',closed_at=now(),closing_amount=$1,expected_amount=$1,notes=$2
+      where id=$3
+      returning *
+    `,[received,String(req.body.notes||req.body.note||""),session.id])).rows[0];
+
     await c.query("commit");
-    res.json({ok:true,session:row,difference:closing-expected});
+    res.json({ok:true,session:row,total_received:received,difference:0});
   }catch(e){
-    await c.query("rollback");
+    try{await c.query("rollback")}catch(_e){}
     console.error(e);
     res.status(500).json({error:"Erro ao fechar caixa."});
   }finally{c.release()}
