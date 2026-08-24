@@ -1365,14 +1365,14 @@ async function cash(){
     if(!d.session){
       $("adminContent").innerHTML=
         '<div class="panel"><h2>💰 Caixa</h2><div class="notice">Nenhum caixa está aberto.</div>'+ 
-        '<div class="field"><label>Valor inicial / troco</label><input id="cashOpening" type="number" step="0.01" min="0" value="0"></div>'+ 
+        ''+ 
         '<button class="btn" onclick="openCash()">Abrir caixa</button></div>'+cashHistoryHtml(h);
       return;
     }
     const x=d.summary;
     $("adminContent").innerHTML=
       '<div class="panel"><div class="row"><h2>💰 Caixa aberto</h2><span class="badgeOpen">ABERTO</span></div>'+ 
-      '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Fundo inicial: <b>'+R(d.session.opening_amount)+'</b></div>'+ 
+      '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+'</b></div>'+ 
       '<div class="cashSummary">'+
         '<div class="cashBox"><small>PIX</small><strong>'+R(x.pix)+'</strong></div>'+ 
         '<div class="cashBox"><small>Total vendido</small><strong>'+R(x.sales_total)+'</strong></div>'+ 
@@ -1391,7 +1391,7 @@ function cashHistoryHtml(h){
 
 async function openCash(){
   try{
-    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:Number($("cashOpening").value||0)})});
+    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:0})});
     cash();
   }catch(e){alert(e.message)}
 }
