@@ -848,47 +848,43 @@ async function cancelAccount(accountId,tableNumber,customerName=""){
   }catch(e){alert(e.message)}
 }
 
-let selectedPayment="";
+let selectedPayment="PIX";
 function closeAccountForm(accountId,tableNumber,total,customerName=""){
-  selectedPayment="";
+  selectedPayment="PIX";
+  const origin=customerName?customerName:("Mesa "+tableNumber);
   modal(
-    '<h2>Fechar conta — '+(customerName?E(customerName):('Mesa '+tableNumber))+'</h2>'+
+    '<h2>Fechar conta — '+E(origin)+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
-    '<p>Escolha a forma de pagamento:</p>'+
+    '<p>Forma de pagamento:</p>'+
     '<div class="paymentGrid">'+
-      '<button id="payPIX" onclick="selectPayment(\'PIX\')">PIX</button>'+
-      '<button id="payDinheiro" onclick="selectPayment(\'Dinheiro\')">Dinheiro</button>'+
+      '<button id="payPIX" class="selected" type="button">PIX</button>'+
     '</div>'+
-    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">Confirmar pagamento</button> '+
+    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+',\''+E(customerName||"")+'\')">Confirmar pagamento</button> '+
     '<button class="secondary" onclick="viewAccount('+tableNumber+')">Voltar</button>'
   );
 }
 
 function selectPayment(method){
-  selectedPayment=method;
-  ["PIX","Dinheiro"].forEach(x=>{
-    const id="pay"+x;
-    const el=$(id);
-    if(el)el.classList.toggle("selected",x===method);
-  });
+  selectedPayment="PIX";
 }
 
-async function confirmCloseAccount(accountId,tableNumber){
-  if(!selectedPayment){alert("Escolha a forma de pagamento.");return}
-  if(!confirm("Confirmar fechamento da conta da Mesa "+tableNumber+" em "+selectedPayment+"?"))return;
+async function confirmCloseAccount(accountId,tableNumber,customerName=""){
+  selectedPayment="PIX";
+  const origin=customerName?customerName:("Mesa "+tableNumber);
+  if(!confirm("Confirmar fechamento da conta "+origin+" em PIX?"))return;
 
   try{
     const r=await api("/api/accounts/"+accountId+"/close",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({payment_method:selectedPayment})
+      body:JSON.stringify({payment_method:"PIX"})
     });
     modal(
       '<div style="text-align:center">'+
         '<div style="font-size:56px">✅</div>'+
         '<h2>Conta fechada!</h2>'+
-        '<p>Mesa '+r.table_number+'</p>'+
-        '<p><b>'+R(r.total)+'</b> • '+E(r.payment_method)+'</p>'+
+        '<p>'+E(origin)+'</p>'+
+        '<p><b>'+R(r.total)+'</b> • PIX</p>'+
         '<button class="btn" onclick="closeModal();dashboard()">OK</button>'+
       '</div>'
     );
