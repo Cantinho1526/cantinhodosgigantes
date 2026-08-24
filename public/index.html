@@ -841,7 +841,7 @@ async function cancelAccount(accountId,tableNumber,customerName=""){
         '<h2>Comanda cancelada</h2>'+
         '<p>'+(customerName?('Comanda de '+E(customerName)+' encerrada.'):('Mesa '+r.table_number+' liberada.'))+'</p>'+
         '<p><b>'+r.cancelled_orders+' pedido(s)</b> cancelado(s).</p>'+
-        '<p style="color:#aaa">Nenhum valor foi lançado em PIX ou Dinheiro.</p>'+
+        '<p style="color:#aaa">Nenhum valor foi lançado como pagamento.</p>'+
         '<button class="btn" onclick="closeModal();accounts()">OK</button>'+
       '</div>'
     );
