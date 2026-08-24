@@ -579,8 +579,13 @@ function renderCart(){
 
 function checkout(){
   if(!B.length)return;
-  const mesa=new URLSearchParams(location.search).get("mesa")||prompt("Número da mesa:","1");
-  if(!mesa)return;
+  const qs=new URLSearchParams(location.search);
+  const mesa=qs.get("mesa");
+  const token=qs.get("t");
+  if(!mesa||!token){
+    alert("Para enviar o pedido, abra o cardápio pelo QR Code da sua mesa.");
+    return;
+  }
 
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
   modal(
@@ -601,6 +606,7 @@ async function sendOrder(mesa){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         table:mesa,
+        access_token:new URLSearchParams(location.search).get("t")||"",
         items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
         observation:$("obs").value
       })
@@ -923,10 +929,13 @@ async function orders(){
       }[o.status]||"";
 
       const ageInfo=kitchenAgeInfo(o.created_at);
-      const pixConfirmed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
-      const paymentBadge = pixConfirmed
-        ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • COMANDA PAGA</span></div>'
-        : '';
+      const pixClosed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
+      const pixVerified = pixClosed && Boolean(o.pix_verified);
+      const paymentBadge = pixVerified
+        ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • MERCADO PAGO</span></div>'
+        : (pixClosed
+          ? '<div><span class="paymentConfirmedBadge">✅ CONTA FECHADA • PIX MANUAL</span></div>'
+          : '');
 
       let actions='';
       if(o.status==="Recebido"){
@@ -1413,7 +1422,7 @@ async function closeCash(id,pixTotal){
     await api("/api/cash/"+id+"/close",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({closing_amount:Number(pixTotal||0),notes:note,note:note})
+      body:JSON.stringify({notes:note})
     });
     closeModal();
     cash();
