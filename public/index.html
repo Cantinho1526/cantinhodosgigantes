@@ -813,7 +813,7 @@ function titleAccountHtml(title,account,data,av){
     '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
     '<button class="btn" onclick="addLooseOrderForm('+account.id+')">+ Adicionar pedido</button> '+
     (data.total>0?'<button class="btn" onclick="closeAccountForm('+account.id+','+account.table_number+','+data.total+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">Fechar conta</button> ':'')+
-    '<button class="danger" onclick="cancelAccount('+account.id+','+account.table_number+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">🗑️ Cancelar comanda/teste</button> <button class="secondary" onclick="closeModal();accounts()">Voltar</button>';
+    '<button class="danger" onclick="cancelAccount('+account.id+','+account.table_number+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">🗑️ Cancelar comanda</button> <button class="secondary" onclick="closeModal();accounts()">Voltar</button>';
 }
 let looseOrderItems=[];
 async function addLooseOrderForm(accountId){
