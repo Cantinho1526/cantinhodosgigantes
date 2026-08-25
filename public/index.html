@@ -231,7 +231,13 @@ try{
   if(Array.isArray(saved))newOrderQueue=saved;
 }catch(_e){newOrderQueue=[]}
 
+function sortPendingAlerts(){
+  // O alerta sempre prioriza o pedido pendente mais novo.
+  // Evita que um pedido antigo salvo na sessão fique preso no canto da tela.
+  newOrderQueue.sort((a,b)=>(Number(b.id)||0)-(Number(a.id)||0));
+}
 function savePendingAlerts(){
+  sortPendingAlerts();
   sessionStorage.setItem("cg_pending_order_alerts",JSON.stringify(newOrderQueue));
 }
 function stopOrderWatch(){
