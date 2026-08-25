@@ -6,15 +6,17 @@ const QRCode=require("qrcode");
 
 const app=express();
 const PORT=process.env.PORT||3000;
-const ADMIN_PIN=process.env.ADMIN_PIN||"1234";
-const MP_ACCESS_TOKEN=process.env.MP_ACCESS_TOKEN||"";
-const TABLE_QR_SECRET=process.env.TABLE_QR_SECRET||ADMIN_PIN;
+const ADMIN_PIN=String(process.env.ADMIN_PIN||"").trim();
+const MP_ACCESS_TOKEN=String(process.env.MP_ACCESS_TOKEN||"").trim();
+const TABLE_QR_SECRET=String(process.env.TABLE_QR_SECRET||"").trim();
 
-if(!process.env.ADMIN_PIN){
-  console.warn("⚠️ SEGURANÇA: ADMIN_PIN não configurado no ambiente. Configure uma senha forte no Render antes do uso público.");
+if(!ADMIN_PIN){
+  console.error("ADMIN_PIN ausente. Configure a variável no Render antes de iniciar o sistema.");
+  process.exit(1);
 }
-if(!process.env.TABLE_QR_SECRET){
-  console.warn("⚠️ SEGURANÇA: TABLE_QR_SECRET não configurado; usando ADMIN_PIN como segredo dos QR Codes.");
+if(!TABLE_QR_SECRET){
+  console.error("TABLE_QR_SECRET ausente. Configure a variável no Render antes de iniciar o sistema.");
+  process.exit(1);
 }
 
 if(!process.env.DATABASE_URL){
@@ -262,6 +264,7 @@ async function reconcilePaidPixAccounts(){
       const c=await pool.connect();
       try{
         await c.query("begin");
+        await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
 
         const account=(await c.query(
           `select * from table_accounts where id=$1 for update`,
@@ -274,6 +277,13 @@ async function reconcilePaidPixAccounts(){
         );
 
         if(account && account.status==='Aberta'){
+          const cashSession=await getOpenCashSession(c);
+          if(!cashSession){
+            console.error("PIX confirmado sem caixa aberto; comanda mantida aberta para conferência.",{pix_id:p.id,account_id:p.account_id});
+            await c.query("commit");
+            continue;
+          }
+
           // Confere o total da própria comanda vinculada ao PIX.
           const total=Number((await c.query(`
             select coalesce(sum(total),0)::numeric total
@@ -325,6 +335,37 @@ function isStaleTableAccount(account){
 }
 function staleTableAccountMessage(){
   return "Esta mesa possui uma comanda antiga ainda aberta. Peça ao atendimento para fechar ou cancelar a comanda anterior antes de fazer um novo pedido.";
+}
+
+// Todas as operações que mudam o estado financeiro compartilham o mesmo lock.
+// Isso evita corrida entre "fechar conta" e "fechar caixa".
+const FINANCE_LOCK_KEY=734215621;
+
+async function getOpenCashSession(db){
+  return (await db.query(`
+    select * from cash_sessions
+    where status='Aberto'
+    order by id desc limit 1
+  `)).rows[0]||null;
+}
+
+async function getOpenAccountsSummary(db){
+  const r=(await db.query(`
+    select count(*)::int count,coalesce(sum(x.total),0)::numeric total
+    from (
+      select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Aberta'
+      group by a.id
+      having coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)>0
+    ) x
+  `)).rows[0];
+  return {count:Number(r.count||0),total:Number(r.total||0)};
+}
+
+function noOpenCashMessage(){
+  return "Abra o caixa antes de receber ou fechar uma conta. Nenhum pagamento pode ser registrado com o caixa fechado.";
 }
 
 async function getOrCreateOpenAccount(client,tableNumber){
@@ -428,6 +469,9 @@ app.post("/api/orders",async(req,res)=>{
   if(!Number.isInteger(tableNumber)||tableNumber<1||!Array.isArray(items)||!items.length){
     return res.status(400).json({error:"Pedido inválido."});
   }
+  if(items.length>50){
+    return res.status(400).json({error:"Há itens demais neste pedido."});
+  }
   if(!validTableAccess(tableNumber,accessToken)){
     return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
   }
@@ -441,7 +485,11 @@ app.post("/api/orders",async(req,res)=>{
     const normalized=[];
 
     for(const item of items){
-      const quantity=Math.max(1,Math.floor(Number(item.quantity)));
+      const rawQuantity=Number(item.quantity);
+      if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99){
+        throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
+      }
+      const quantity=Math.floor(rawQuantity);
       const r=await c.query(
         "select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",
         [Number(item.product_id)]
@@ -735,6 +783,11 @@ app.post("/api/client/pix",async(req,res)=>{
   }
 
   try{
+    const cashSession=await getOpenCashSession(pool);
+    if(!cashSession){
+      return res.status(409).json({error:noOpenCashMessage(),cash_closed:true});
+    }
+
     const account=(await pool.query(
       `select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,
       [tableNumber]
@@ -981,6 +1034,7 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
   const items=Array.isArray(req.body.items)?req.body.items:[];
   const observation=String(req.body.observation||"");
   if(!items.length)return res.status(400).json({error:"Adicione pelo menos um produto."});
+  if(items.length>50)return res.status(400).json({error:"Há itens demais neste pedido."});
   const c=await pool.connect();
   try{
     await c.query("begin");
@@ -988,7 +1042,9 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
     if(!account)throw Error("Comanda aberta não encontrada.");
     let total=0; const normalized=[];
     for(const item of items){
-      const quantity=Math.max(1,Math.floor(Number(item.quantity||1)));
+      const rawQuantity=Number(item.quantity||1);
+      if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99)throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
+      const quantity=Math.floor(rawQuantity);
       const r=await c.query("select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(item.product_id)]);
       if(!r.rowCount)throw Error("Produto inválido.");
       const p=r.rows[0],price=Number(p.price),cost=Number(p.cost_price||0);
@@ -1108,6 +1164,7 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
   const c=await pool.connect();
   try{
     await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
 
     const account=(await c.query(
       `select * from table_accounts
@@ -1119,6 +1176,12 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
     if(!account){
       await c.query("rollback");
       return res.status(404).json({error:"Comanda aberta não encontrada."});
+    }
+
+    const cashSession=await getOpenCashSession(c);
+    if(!cashSession){
+      await c.query("rollback");
+      return res.status(409).json({error:noOpenCashMessage(),cash_closed:true});
     }
 
     const total=Number((await c.query(`
@@ -1146,14 +1209,16 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
 
 app.post("/api/products",requireAdmin,async(req,res)=>{
   const x=req.body;
-  if(!x.name||!Number(x.price)||!Number(x.category_id)){
-    return res.status(400).json({error:"Preencha nome, preço e categoria."});
+  const name=String(x.name||"").trim();
+  const price=Number(x.price),categoryId=Number(x.category_id);
+  if(!name||name.length>120||!Number.isFinite(price)||price<=0||!Number.isInteger(categoryId)||categoryId<1){
+    return res.status(400).json({error:"Preencha nome, preço positivo e categoria válida."});
   }
   try{
     const r=await pool.query(
       `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price)
        values($1,$2,$3,$4,$5,$6,true,$7,$8,$9) returning id`,
-      [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
+      [name,String(x.description||"").slice(0,500),price,categoryId,
        String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0)]
     );
     res.json(r.rows[0]);
@@ -1162,10 +1227,15 @@ app.post("/api/products",requireAdmin,async(req,res)=>{
 
 app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   const x=req.body;
+  const name=String(x.name||"").trim();
+  const price=Number(x.price),categoryId=Number(x.category_id);
+  if(!name||name.length>120||!Number.isFinite(price)||price<=0||!Number.isInteger(categoryId)||categoryId<1){
+    return res.status(400).json({error:"Preencha nome, preço positivo e categoria válida."});
+  }
   try{
     await pool.query(
       `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9 where id=$10`,
-      [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
+      [name,String(x.description||"").slice(0,500),price,categoryId,
        String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Number(req.params.id)]
     );
     res.json({ok:true});
@@ -1268,7 +1338,8 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
       `,[session.opened_at])).rows[0];
       summary={pix:Number(r.pix),sales_total:Number(r.sales_total),count:r.count};
     }
-    res.json({session,summary});
+    const openAccounts=await getOpenAccountsSummary(pool);
+    res.json({session,summary,open_accounts:openAccounts});
   }catch(e){
     console.error(e);
     res.status(500).json({error:"Erro ao carregar caixa."});
@@ -1294,6 +1365,7 @@ app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
   const c=await pool.connect();
   try{
     await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
     const session=(await c.query(
       `select * from cash_sessions where id=$1 and status='Aberto' for update`,
       [Number(req.params.id)]
@@ -1301,6 +1373,15 @@ app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
     if(!session){
       await c.query("rollback");
       return res.status(404).json({error:"Caixa aberto não encontrado."});
+    }
+
+    const openAccounts=await getOpenAccountsSummary(c);
+    if(openAccounts.count>0){
+      await c.query("rollback");
+      return res.status(409).json({
+        error:`Não é possível fechar o caixa. Existem ${openAccounts.count} comanda(s) aberta(s), totalizando R$ ${openAccounts.total.toFixed(2).replace('.',',')}. Feche ou cancele as comandas antes de encerrar o caixa.`,
+        open_accounts:openAccounts
+      });
     }
 
     // O servidor é a fonte de verdade do fechamento: soma somente contas PIX
