@@ -632,7 +632,13 @@ async function myAccount(){
     if(!d.open){modal('<h2>🧾 Minha comanda</h2><div class="empty">Ainda não há pedidos nesta mesa.</div><button class="secondary" onclick="closeModal()">Voltar</button>');return}
     const orders=d.orders.filter(o=>o.status!=="Cancelado");
     modal('<h2>🧾 Minha comanda — Mesa '+E(mesa)+'</h2>'+orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b>'+o.items.map(i=>'<div class="row"><span>'+i.quantity+'x '+E(i.name)+'</span><span>'+R(Number(i.unit_price)*i.quantity)+'</span></div>').join('')+'</div>').join('')+'<h2 style="margin-top:16px">Total: '+R(d.total)+'</h2><div class="notice">O pagamento abaixo é somente por PIX.</div><button class="btn" onclick="askPix()">💠 Pagar com PIX</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
-  }catch(e){alert(e.message)}
+  }catch(e){
+    if(String(e.message||"").includes("comanda antiga")){
+      modal('<h2>⚠️ Comanda antiga aberta</h2><div class="notice">'+E(e.message)+'</div><button class="secondary" onclick="closeModal()">OK</button>');
+      return;
+    }
+    alert(e.message)
+  }
 }
 
 function askPix(){
