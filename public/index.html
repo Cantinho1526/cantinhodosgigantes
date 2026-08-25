@@ -224,6 +224,7 @@ textarea{min-height:88px}
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
 let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
+let pixAutoTimer=null,pixAutoBusy=false,pixAutoPaymentId=null,pixAutoStartedAt=0;
 
 try{
   const saved=JSON.parse(sessionStorage.getItem("cg_pending_order_alerts")||"[]");
@@ -289,8 +290,10 @@ function showOrderAlert(o,isTest=false){
   div.id="newOrderToast";
   div.className="newOrderToast";
   const items=(o.items||[]).map(i=>i.quantity+'x '+E(i.name)).join(' • ');
+  const paidWaiting=!isTest && (o.account_status==='Fechada' || o.pix_verified);
+  const alertTitle=isTest?'TESTE DO ALERTA':(paidWaiting?'PEDIDO PAGO • AGUARDANDO ACEITE!':'NOVO PEDIDO!');
   div.innerHTML=
-    '<h3>🔔 '+(isTest?'TESTE DO ALERTA':'NOVO PEDIDO!')+'</h3>'+
+    '<h3>🔔 '+alertTitle+'</h3>'+
     '<p><b>Pedido #'+E(o.id)+' • '+E(kitchenOrigin(o))+'</b></p>'+
     '<p>'+items+'</p>'+
     '<div class="row">'+
@@ -466,7 +469,14 @@ function modal(html){
   $("modal").innerHTML='<div class="modalBox">'+html+'</div>';
   $("modal").classList.remove("hidden");
 }
-function closeModal(){$("modal").classList.add("hidden")}
+function stopPixAutoCheck(){
+  if(pixAutoTimer){clearInterval(pixAutoTimer);pixAutoTimer=null}
+  pixAutoBusy=false;pixAutoPaymentId=null;pixAutoStartedAt=0;
+}
+function closeModal(){
+  stopPixAutoCheck();
+  $("modal").classList.add("hidden");
+}
 
 async function client(){
   // Ao sair do Admin, interrompe o monitoramento da cozinha para que
@@ -662,13 +672,15 @@ async function createPix(){
       '<div class="notice">Confira o valor antes de pagar. Este PIX corresponde à sua comanda atual.</div>'+ 
       '<p>Escaneie o QR Code ou use o Pix Copia e Cola.</p>'+img+
       '<div id="pixCode" class="pixCode">'+E(d.qr_code)+'</div>'+ 
+      '<div id="pixAutoStatus" class="notice" style="margin-top:12px">⏳ Aguardando o pagamento. A confirmação será feita automaticamente.</div>'+
       '<div class="clientActions" style="justify-content:center">'+
         '<button class="btn" onclick="copyPix()">📋 Copiar código PIX</button>'+ 
-        '<button class="secondary" onclick="checkPix('+Number(d.payment_id)+')">🔄 Verificar pagamento</button>'+ 
+        '<button class="secondary" onclick="checkPix('+Number(d.payment_id)+',true)">🔄 Verificar agora</button>'+ 
       '</div>'+ 
-      '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago.</p>'+ 
+      '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago. A tela verifica automaticamente a cada poucos segundos.</p>'+ 
       '<button class="secondary" onclick="closeModal()">Fechar</button>'+ 
     '</div>');
+    startPixAutoCheck(Number(d.payment_id));
     }catch(e){
     if(String(e.message||"").includes("Abra o caixa")){
       modal('<h2>⚠️ Pagamento indisponível</h2><div class="notice">'+E(e.message)+'</div><button class="secondary" onclick="closeModal()">OK</button>');
@@ -683,13 +695,47 @@ async function copyPix(){
   try{await navigator.clipboard.writeText(code);alert("Código PIX copiado!")}catch(e){alert("Não foi possível copiar automaticamente. Selecione o código e copie manualmente.")}
 }
 
-async function checkPix(id){
+function setPixAutoStatus(text){
+  const el=$("pixAutoStatus");
+  if(el)el.textContent=text;
+}
+function pixPaidSuccess(){
+  stopPixAutoCheck();
+  modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago e a comanda foi fechada.</p><button class="btn" onclick="closeModal();client()">OK</button></div>');
+}
+async function checkPix(id,manual=false){
+  if(pixAutoBusy)return false;
+  pixAutoBusy=true;
   const token=new URLSearchParams(location.search).get("t");
   try{
     const d=await api("/api/client/pix/"+id+"/status?t="+encodeURIComponent(token));
-    if(d.paid)modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago.</p><button class="btn" onclick="closeModal()">OK</button></div>');
-    else alert("Pagamento ainda não confirmado. Status: "+d.status);
-  }catch(e){alert(e.message)}
+    if(d.paid){pixPaidSuccess();return true}
+    const status=String(d.status||"pending");
+    setPixAutoStatus("⏳ Aguardando pagamento. Status: "+status+". Verificando automaticamente...");
+    if(manual)alert("Pagamento ainda não confirmado. Status: "+status);
+    return false;
+  }catch(e){
+    setPixAutoStatus("⚠️ Não foi possível verificar agora. Tentaremos novamente automaticamente.");
+    if(manual)alert(e.message);
+    return false;
+  }finally{pixAutoBusy=false}
+}
+function startPixAutoCheck(id){
+  stopPixAutoCheck();
+  pixAutoPaymentId=Number(id);
+  pixAutoStartedAt=Date.now();
+  // Primeira consulta após poucos segundos, depois a cada 4 s.
+  setTimeout(()=>{if(pixAutoPaymentId===Number(id))checkPix(id,false)},2500);
+  pixAutoTimer=setInterval(()=>{
+    if(pixAutoPaymentId!==Number(id)){stopPixAutoCheck();return}
+    // Depois de 30 minutos o QR já está no limite de validade. Mantém o botão
+    // manual disponível, mas interrompe consultas automáticas desnecessárias.
+    if(Date.now()-pixAutoStartedAt>30*60*1000){
+      setPixAutoStatus("⏱️ A verificação automática foi encerrada. Gere um novo PIX se este tiver expirado.");
+      stopPixAutoCheck();return;
+    }
+    checkPix(id,false);
+  },4000);
 }
 
 function adminLogin(){
