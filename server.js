@@ -316,6 +316,17 @@ async function reconcilePaidPixAccounts(){
   return {checked:rows.length,closed};
 }
 
+
+const TABLE_ACCOUNT_MAX_OPEN_MS=18*60*60*1000;
+function isStaleTableAccount(account){
+  if(!account || account.account_type!=="Mesa" || !account.opened_at)return false;
+  const opened=new Date(account.opened_at).getTime();
+  return Number.isFinite(opened) && (Date.now()-opened)>TABLE_ACCOUNT_MAX_OPEN_MS;
+}
+function staleTableAccountMessage(){
+  return "Esta mesa possui uma comanda antiga ainda aberta. Peça ao atendimento para fechar ou cancelar a comanda anterior antes de fazer um novo pedido.";
+}
+
 async function getOrCreateOpenAccount(client,tableNumber){
   // Serializa a criação da comanda por mesa para evitar duas comandas abertas
   // quando dois pedidos chegam praticamente ao mesmo tempo.
@@ -334,7 +345,11 @@ async function getOrCreateOpenAccount(client,tableNumber){
      for update`,
     [tableNumber]
   );
-  if(r.rowCount)return r.rows[0];
+  if(r.rowCount){
+    const existing=r.rows[0];
+    if(isStaleTableAccount(existing))throw Error(staleTableAccountMessage());
+    return existing;
+  }
 
   r=await client.query(
     `insert into table_accounts(table_number,status,account_type,customer_name)
@@ -694,8 +709,9 @@ app.get("/api/client/account/:table",async(req,res)=>{
     if(!Number.isInteger(tableNumber)||!validTableAccess(tableNumber,req.query.t)){
       return res.status(403).json({error:"Acesso inválido à comanda."});
     }
-    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,[tableNumber])).rows[0];
+    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' and account_type='Mesa' order by id desc limit 1`,[tableNumber])).rows[0];
     if(!account)return res.json({open:false,table_number:tableNumber,orders:[],total:0});
+    if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
     const orders=(await pool.query(`select id,status,observation,total,created_at from orders where account_id=$1 order by id`,[account.id])).rows;
     let total=0;
     for(const o of orders){
@@ -725,6 +741,7 @@ app.post("/api/client/pix",async(req,res)=>{
     )).rows[0];
 
     if(!account)return res.status(404).json({error:"Não há comanda aberta nesta mesa."});
+    if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
 
     const comandaTotal=Number((await pool.query(
       `select coalesce(sum(total),0)::numeric total
