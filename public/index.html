@@ -669,7 +669,13 @@ async function createPix(){
       '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago.</p>'+ 
       '<button class="secondary" onclick="closeModal()">Fechar</button>'+ 
     '</div>');
-  }catch(e){alert(e.message)}
+    }catch(e){
+    if(String(e.message||"").includes("Abra o caixa")){
+      modal('<h2>⚠️ Pagamento indisponível</h2><div class="notice">'+E(e.message)+'</div><button class="secondary" onclick="closeModal()">OK</button>');
+      return;
+    }
+    alert(e.message)
+  }
 }
 
 async function copyPix(){
@@ -861,7 +867,14 @@ async function cancelAccount(accountId,tableNumber,customerName=""){
 }
 
 let selectedPayment="PIX";
-function closeAccountForm(accountId,tableNumber,total,customerName=""){
+async function closeAccountForm(accountId,tableNumber,total,customerName=""){
+  try{
+    const cashState=await api("/api/cash");
+    if(!cashState.session){
+      alert("Abra o caixa antes de receber ou fechar uma conta.");
+      return;
+    }
+  }catch(e){alert(e.message);return}
   selectedPayment="PIX";
   const origin=customerName?customerName:("Mesa "+tableNumber);
   modal(
@@ -1385,14 +1398,20 @@ async function cash(){
       return;
     }
     const x=d.summary;
+    const oa=d.open_accounts||{count:0,total:0};
+    const pendingNotice=Number(oa.count)>0
+      ?'<div class="notice" style="margin-top:10px">⚠️ Não é possível fechar o caixa agora. Existem <b>'+Number(oa.count)+' comanda(s) aberta(s)</b>, totalizando <b>'+R(Number(oa.total||0))+'</b>.</div>'
+      :'';
+    const closeButton=Number(oa.count)>0
+      ?'<button class="secondary" disabled>Fechar caixa bloqueado</button>'
+      :'<button class="btn" onclick="closeCashForm('+d.session.id+','+Number(x.pix)+','+Number(x.sales_total)+','+Number(x.count)+')">Fechar caixa</button>';
     $("adminContent").innerHTML=
       '<div class="panel"><div class="row"><h2>💰 Caixa aberto</h2><span class="badgeOpen">ABERTO</span></div>'+ 
       '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Fundo inicial: <b>'+R(d.session.opening_amount)+'</b></div>'+ 
       '<div class="cashSummary">'+
         '<div class="cashBox"><small>PIX</small><strong>'+R(x.pix)+'</strong></div>'+ 
         '<div class="cashBox"><small>Total vendido</small><strong>'+R(x.sales_total)+'</strong></div>'+ 
-      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+ 
-      '<button class="btn" onclick="closeCashForm('+d.session.id+','+Number(x.pix)+','+Number(x.sales_total)+','+Number(x.count)+')">Fechar caixa</button></div>'+cashHistoryHtml(h);
+      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+pendingNotice+closeButton+'</div>'+cashHistoryHtml(h);
   }catch(e){alert(e.message)}
 }
 
