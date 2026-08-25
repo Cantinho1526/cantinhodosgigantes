@@ -884,6 +884,21 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
       return res.status(404).json({error:"Pagamento não encontrado."});
     }
 
+    // Se o PIX já foi conciliado localmente, responde imediatamente sem
+    // consultar novamente o Mercado Pago. Isso deixa a verificação automática
+    // rápida e mantém a rota idempotente.
+    const localAccount=(await pool.query(
+      `select status,payment_method,closed_at from table_accounts where id=$1`,
+      [p.account_id]
+    )).rows[0];
+    if(String(p.status||"").toLowerCase()==="paid" && localAccount?.status==="Fechada"){
+      return res.json({
+        ok:true,paid:true,status:"paid",account_closed:true,
+        payment_method:localAccount.payment_method||"PIX",
+        closed_at:localAccount.closed_at||null,reconciled:{closed:0}
+      });
+    }
+
     const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
     const payment=data?.transactions?.payments?.[0]||{};
     const rawStatus=String(payment.status||data.status||"");
@@ -1673,8 +1688,25 @@ app.get("/health",async(req,res)=>{
   }
 });
 
+let pixAutoReconcileBusy=false;
+function startPixAutoReconcile(){
+  // Segurança adicional: mesmo que o cliente feche a tela do QR Code, o
+  // servidor continua conciliando PIX pendentes em segundo plano.
+  const timer=setInterval(async()=>{
+    if(pixAutoReconcileBusy)return;
+    pixAutoReconcileBusy=true;
+    try{await reconcilePaidPixAccounts()}
+    catch(e){console.error("Conciliação automática PIX:",e.message||e)}
+    finally{pixAutoReconcileBusy=false}
+  },20000);
+  if(typeof timer.unref==="function")timer.unref();
+}
+
 init()
-  .then(()=>app.listen(PORT,()=>console.log("Cantinho dos Gigantes rodando na porta "+PORT)))
+  .then(()=>app.listen(PORT,()=>{
+    console.log("Cantinho dos Gigantes rodando na porta "+PORT);
+    startPixAutoReconcile();
+  }))
   .catch(e=>{
     console.error("Erro na inicialização:",e);
     process.exit(1);
