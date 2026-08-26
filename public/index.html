@@ -1452,12 +1452,13 @@ async function cash(){
     const x=d.summary;
     const oa=d.open_accounts||{count:0,total:0};
     const receipts=Array.isArray(d.receipts)?d.receipts:[];
+    window.__currentCashData=d;
     const pendingNotice=Number(oa.count)>0
       ?'<div class="notice" style="margin-top:10px">⚠️ Não é possível fechar o caixa agora. Existem <b>'+Number(oa.count)+' comanda(s) aberta(s)</b>, totalizando <b>'+R(Number(oa.total||0))+'</b>.</div>'
       :'';
     const closeButton=Number(oa.count)>0
       ?'<button class="secondary" disabled>Fechar caixa bloqueado</button>'
-      :'<button class="btn" onclick="closeCashForm('+d.session.id+','+Number(x.pix)+','+Number(x.sales_total)+','+Number(x.count)+')">Fechar caixa</button>';
+      :'<button class="btn" onclick="closeCashForm('+d.session.id+')">Fechar caixa</button>';
     const receiptsHtml=!receipts.length
       ?'<div class="empty">Nenhuma conta recebida neste caixa ainda.</div>'
       :receipts.map(r=>{
@@ -1486,7 +1487,7 @@ function cashHistoryHtml(h){
   const closed=h.filter(x=>x.status==="Fechado");
   return '<div class="panel"><h2>Últimos fechamentos</h2>'+(!closed.length?'<div class="empty">Nenhum fechamento registrado.</div>':closed.slice(0,10).map(x=>
     '<div class="saleRow"><div><b>Caixa #'+x.id+'</b><div style="color:#aaa">'+new Date(x.opened_at).toLocaleString("pt-BR")+' → '+new Date(x.closed_at).toLocaleString("pt-BR")+'</div></div>'+ 
-    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Total recebido</div></div></div>'
+    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Total recebido</div><button class="secondary" style="margin-top:8px" onclick="cashDetails('+x.id+')">Ver detalhes</button></div></div>'
   ).join(""))+'</div>';
 }
 
@@ -1497,18 +1498,41 @@ async function openCash(){
   }catch(e){alert(e.message)}
 }
 
-function closeCashForm(id,pixTotal,salesTotal,count){
+function cashReceiptRows(receipts){
+  if(!Array.isArray(receipts)||!receipts.length)return '<div class="empty">Nenhum recebimento registrado.</div>';
+  return receipts.map(r=>{
+    const label=String(r.account_type||'Mesa')==='Avulsa'
+      ?(String(r.customer_name||'Comanda avulsa').trim()||'Comanda avulsa')
+      :'Mesa '+Number(r.table_number);
+    const mp=!!r.mercado_pago_verified;
+    const source=mp?'💎 Mercado Pago':'✅ PIX manual';
+    return '<div class="saleRow"><div><b>'+E(label)+'</b><div style="color:#aaa">'+new Date(r.closed_at).toLocaleString("pt-BR")+' • '+Number(r.order_count||0)+' pedido(s)</div><div style="margin-top:4px">'+source+'</div></div><div style="text-align:right"><b class="price">'+R(Number(r.total||0))+'</b></div></div>';
+  }).join('');
+}
+
+function closeCashForm(id){
+  const d=window.__currentCashData||{};
+  const x=d.summary||{};
+  const s=d.session||{};
+  const receipts=Array.isArray(d.receipts)?d.receipts:[];
   modal(
-    '<h2>Fechar caixa</h2>'+
-    '<div class="notice">Total recebido em PIX: <b>'+R(pixTotal)+'</b></div>'+
-    '<div class="notice" style="margin-top:8px">Total vendido: <b>'+R(salesTotal)+'</b> • '+Number(count||0)+' conta(s) recebida(s)</div>'+
-    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNote"></textarea></div>'+
-    '<button class="btn" onclick="closeCash('+id+','+Number(pixTotal)+')">Confirmar fechamento</button> '+
+    '<h2>💰 Conferência de fechamento</h2>'+ 
+    '<div class="notice">Aberto em <b>'+new Date(s.opened_at).toLocaleString("pt-BR")+'</b> • Fundo inicial: <b>'+R(Number(s.opening_amount||0))+'</b></div>'+ 
+    '<div class="cashSummary" style="margin-top:10px">'+
+      '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
+      '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
+      '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
+      '<div class="cashBox"><small>Total vendido</small><strong>'+R(Number(x.sales_total||0))+'</strong></div>'+ 
+    '</div>'+ 
+    '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+'</b> conta(s) recebida(s) neste caixa.</div>'+ 
+    '<div style="max-height:230px;overflow:auto;margin-top:10px">'+cashReceiptRows(receipts)+'</div>'+ 
+    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNote"></textarea></div>'+ 
+    '<button class="btn" onclick="closeCash('+id+')">Confirmar fechamento</button> '+
     '<button class="secondary" onclick="closeModal()">Voltar</button>'
   );
 }
 
-async function closeCash(id,pixTotal){
+async function closeCash(id){
   try{
     const note=$("cashNote").value.trim();
     await api("/api/cash/"+id+"/close",{
@@ -1518,6 +1542,27 @@ async function closeCash(id,pixTotal){
     });
     closeModal();
     cash();
+  }catch(e){alert(e.message)}
+}
+
+async function cashDetails(id){
+  try{
+    const d=await api("/api/cash/"+id+"/details");
+    const x=d.summary||{};
+    const s=d.session||{};
+    modal(
+      '<h2>🧾 Detalhes do Caixa #'+Number(s.id||id)+'</h2>'+ 
+      '<div class="notice">'+new Date(s.opened_at).toLocaleString("pt-BR")+' → '+(s.closed_at?new Date(s.closed_at).toLocaleString("pt-BR"):'Aberto')+'</div>'+ 
+      '<div class="cashSummary" style="margin-top:10px">'+
+        '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>Contas</small><strong>'+Number(x.count||0)+'</strong></div>'+ 
+      '</div>'+ 
+      '<div style="max-height:360px;overflow:auto;margin-top:10px">'+cashReceiptRows(d.receipts||[])+'</div>'+ 
+      (String(s.notes||'').trim()?'<div class="notice" style="margin-top:10px"><b>Observação:</b> '+E(String(s.notes))+'</div>':'')+
+      '<button class="secondary" onclick="closeModal()">Fechar</button>'
+    );
   }catch(e){alert(e.message)}
 }
 
