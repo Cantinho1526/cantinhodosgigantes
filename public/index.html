@@ -1510,26 +1510,47 @@ function cashReceiptRows(receipts){
   }).join('');
 }
 
-function closeCashForm(id){
-  const d=window.__currentCashData||{};
-  const x=d.summary||{};
-  const s=d.session||{};
-  const receipts=Array.isArray(d.receipts)?d.receipts:[];
-  modal(
-    '<h2>💰 Conferência de fechamento</h2>'+ 
-    '<div class="notice">Aberto em <b>'+new Date(s.opened_at).toLocaleString("pt-BR")+'</b> • Fundo inicial: <b>'+R(Number(s.opening_amount||0))+'</b></div>'+ 
-    '<div class="cashSummary" style="margin-top:10px">'+
-      '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
-      '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
-      '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
-      '<div class="cashBox"><small>Total vendido</small><strong>'+R(Number(x.sales_total||0))+'</strong></div>'+ 
-    '</div>'+ 
-    '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+'</b> conta(s) recebida(s) neste caixa.</div>'+ 
-    '<div style="max-height:230px;overflow:auto;margin-top:10px">'+cashReceiptRows(receipts)+'</div>'+ 
-    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNote"></textarea></div>'+ 
-    '<button class="btn" onclick="closeCash('+id+')">Confirmar fechamento</button> '+
-    '<button class="secondary" onclick="closeModal()">Voltar</button>'
-  );
+async function closeCashForm(id){
+  try{
+    // Busca os dados novamente no momento do clique para evitar qualquer resumo antigo em cache.
+    const d=await api("/api/cash");
+    if(!d.session || Number(d.session.id)!==Number(id)){
+      throw new Error("Este caixa não está mais aberto. Atualize a tela.");
+    }
+    const x=d.summary||{};
+    const s=d.session||{};
+    const receipts=Array.isArray(d.receipts)?d.receipts:[];
+    const oa=d.open_accounts||{count:0,total:0};
+    if(Number(oa.count||0)>0){
+      alert("Não é possível fechar o caixa. Existem "+Number(oa.count)+" comanda(s) aberta(s), totalizando "+R(Number(oa.total||0))+".");
+      return;
+    }
+
+    const receiptTotal=receipts.reduce((sum,r)=>sum+Number(r.total||0),0);
+    const sourceCheck=(Number(x.mercado_pago_pix||0)+Number(x.manual_pix||0));
+    const integrityOk=Math.abs(receiptTotal-Number(x.sales_total||0))<0.01 && Math.abs(sourceCheck-Number(x.pix||0))<0.01;
+
+    modal(
+      '<h2>💰 Conferência completa do caixa</h2>'+ 
+      '<div class="notice">Aberto em <b>'+new Date(s.opened_at).toLocaleString("pt-BR")+'</b> • Fundo inicial: <b>'+R(Number(s.opening_amount||0))+'</b></div>'+ 
+      '<div class="cashSummary" style="margin-top:10px">'+
+        '<div class="cashBox"><small>💎 PIX Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>Total vendido</small><strong>'+R(Number(x.sales_total||0))+'</strong></div>'+ 
+      '</div>'+ 
+      '<div class="notice" style="margin-top:10px"><b>Contas recebidas:</b> '+Number(x.count||0)+' • <b>Soma da lista:</b> '+R(receiptTotal)+'</div>'+ 
+      (integrityOk
+        ?'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#0d4027;border:1px solid #197548;color:#d9ffea;font-weight:800">✅ Conferência financeira consistente</div>'
+        :'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#5a1a1a;border:1px solid #b83333;color:#ffdede;font-weight:800">⚠️ Divergência encontrada. Não confirme o fechamento e confira os recebimentos.</div>')+
+      '<h3 style="margin:18px 0 6px">🧾 Contas incluídas neste fechamento</h3>'+ 
+      '<div style="max-height:260px;overflow:auto;border:1px solid #333;border-radius:12px;padding:0 10px">'+cashReceiptRows(receipts)+'</div>'+ 
+      '<div class="field" style="margin-top:14px"><label>Observação (opcional)</label><textarea id="cashNote" placeholder="Ex.: conferido por Sandra, sem divergências"></textarea></div>'+ 
+      '<div class="notice" style="margin-top:10px">Ao confirmar, este caixa será encerrado com <b>'+R(Number(x.sales_total||0))+'</b> em vendas e <b>'+Number(x.count||0)+'</b> conta(s) recebida(s).</div>'+ 
+      '<button class="btn" '+(integrityOk?'':'disabled style="opacity:.45;cursor:not-allowed"')+' onclick="closeCash('+id+')">✅ Confirmar fechamento</button> '+
+      '<button class="secondary" onclick="closeModal()">Voltar</button>'
+    );
+  }catch(e){alert(e.message)}
 }
 
 async function closeCash(id){
