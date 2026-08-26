@@ -440,6 +440,34 @@ app.get("/api/stock",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar estoque."})}
 });
 
+
+app.put("/api/stock/costs/bulk",requireAdmin,async(req,res)=>{
+  const items=Array.isArray(req.body&&req.body.items)?req.body.items:[];
+  if(!items.length)return res.status(400).json({error:"Informe pelo menos um produto."});
+  if(items.length>300)return res.status(400).json({error:"Muitos produtos em uma única atualização."});
+  const normalized=[];
+  for(const x of items){
+    const id=Number(x&&x.id), cost=Math.max(0,Number(x&&x.cost_price)||0);
+    if(!Number.isInteger(id)||id<=0||!Number.isFinite(cost))return res.status(400).json({error:"Existe um produto ou custo inválido."});
+    normalized.push({id,cost});
+  }
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    let updated=0;
+    for(const x of normalized){
+      const r=await c.query("update products set cost_price=$1 where id=$2 and active=true",[x.cost,x.id]);
+      updated+=r.rowCount;
+    }
+    await c.query("commit");
+    res.json({ok:true,updated});
+  }catch(e){
+    await c.query("rollback");
+    console.error(e);
+    res.status(500).json({error:"Erro ao salvar custos em lote."});
+  }finally{c.release()}
+});
+
 app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
   const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
   const control=Boolean(req.body.stock_control);
