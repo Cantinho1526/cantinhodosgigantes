@@ -1334,27 +1334,50 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
       select * from cash_sessions where status='Aberto' order by id desc limit 1
     `)).rows[0]||null;
 
-    let summary={pix:0,sales_total:0,count:0};
+    let summary={pix:0,sales_total:0,count:0,mercado_pago_pix:0,manual_pix:0};
+    let receipts=[];
     if(session){
-      const r=(await pool.query(`
+      receipts=(await pool.query(`
         select
-          coalesce(sum(x.total),0)::numeric pix,
-          coalesce(sum(x.total),0)::numeric sales_total,
-          count(*)::int count
-        from (
-          select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
-          from table_accounts a
-          left join orders o on o.account_id=a.id
-          where a.status='Fechada'
-            and a.payment_method='PIX'
-            and a.closed_at>= $1
-          group by a.id
-        ) x
-      `,[session.opened_at])).rows[0];
-      summary={pix:Number(r.pix),sales_total:Number(r.sales_total),count:r.count};
+          a.id,
+          a.table_number,
+          a.account_type,
+          a.customer_name,
+          a.closed_at,
+          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+          count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+          exists(
+            select 1 from pix_payments pp
+            where pp.account_id=a.id
+              and lower(pp.status) in ('paid','processed','approved')
+          ) as mercado_pago_verified
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and a.payment_method='PIX'
+          and a.closed_at>= $1
+        group by a.id
+        order by a.closed_at desc,a.id desc
+      `,[session.opened_at])).rows.map(x=>({
+        ...x,
+        total:Number(x.total),
+        order_count:Number(x.order_count||0),
+        payment_source:x.mercado_pago_verified?'Mercado Pago':'PIX manual'
+      }));
+
+      const mercadoPagoPix=receipts.filter(x=>x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+      const manualPix=receipts.filter(x=>!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+      const total=mercadoPagoPix+manualPix;
+      summary={
+        pix:total,
+        sales_total:total,
+        count:receipts.length,
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix
+      };
     }
     const openAccounts=await getOpenAccountsSummary(pool);
-    res.json({session,summary,open_accounts:openAccounts});
+    res.json({session,summary,receipts,open_accounts:openAccounts});
   }catch(e){
     console.error(e);
     res.status(500).json({error:"Erro ao carregar caixa."});
