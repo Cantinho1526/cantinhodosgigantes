@@ -129,6 +129,10 @@ async function init(){
       created_at timestamptz not null default now()
     );
 
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS previous_cost numeric(10,2);
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS new_cost numeric(10,2);
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS entry_unit_cost numeric(10,2);
+
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS account_id int REFERENCES table_accounts(id);
 
     CREATE TABLE IF NOT EXISTS order_items(
@@ -554,7 +558,7 @@ app.get("/api/admin/products",requireAdmin,async(req,res)=>{
 
 app.get("/api/stock",requireAdmin,async(req,res)=>{
   try{
-    const rows=(await pool.query(`select p.id,p.name,p.emoji,p.stock_quantity,p.stock_control,p.stock_low_threshold,c.name category
+    const rows=(await pool.query(`select p.id,p.name,p.emoji,p.price,p.cost_price,p.stock_quantity,p.stock_control,p.stock_low_threshold,c.name category
       from products p join categories c on c.id=p.category_id where p.active=true order by c.id,p.name`)).rows;
     res.json(rows);
   }catch(e){res.status(500).json({error:"Erro ao carregar estoque."})}
@@ -564,17 +568,23 @@ app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
   const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
   const control=Boolean(req.body.stock_control);
   const threshold=Math.max(0,Math.floor(Number(req.body.stock_low_threshold) || 0));
+  const requestedCost=Number(req.body.cost_price);
+  const hasCost=Number.isFinite(requestedCost)&&requestedCost>=0;
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const cur=await c.query("select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(req.params.id)]);
+    const cur=await c.query("select id,name,stock_quantity,stock_control,cost_price from products where id=$1 and active=true for update",[Number(req.params.id)]);
     if(!cur.rowCount){await c.query("rollback");return res.status(404).json({error:"Produto não encontrado."});}
     const previous=Number(cur.rows[0].stock_quantity||0);
-    const r=await c.query("update products set stock_quantity=$1,stock_control=$2,stock_low_threshold=$3 where id=$4 returning id,name,stock_quantity,stock_control,stock_low_threshold",[quantity,control,threshold,Number(req.params.id)]);
-    if(previous!==quantity){
-      await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-        values($1,'Ajuste manual',$2,$3,$4,'Correção manual de estoque')`,
-        [Number(req.params.id),Math.abs(quantity-previous),previous,quantity]);
+    const previousCost=Number(cur.rows[0].cost_price||0);
+    const nextCost=hasCost?requestedCost:previousCost;
+    const r=await c.query("update products set stock_quantity=$1,stock_control=$2,stock_low_threshold=$3,cost_price=$4 where id=$5 returning id,name,stock_quantity,stock_control,stock_low_threshold,cost_price",[quantity,control,threshold,nextCost,Number(req.params.id)]);
+    if(previous!==quantity || Math.abs(previousCost-nextCost)>0.0001){
+      const movementType=previous!==quantity?'Ajuste manual':'Ajuste de custo';
+      const note=previous!==quantity?'Correção manual de estoque':'Atualização manual do custo unitário';
+      await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note,previous_cost,new_cost)
+        values($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [Number(req.params.id),movementType,Math.abs(quantity-previous),previous,quantity,note,previousCost,nextCost]);
     }
     await c.query("commit");
     res.json(r.rows[0]);
@@ -586,7 +596,7 @@ app.get("/api/stock/history",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
       select sm.id,sm.product_id,p.name product_name,p.emoji,sm.movement_type,sm.quantity,
-             sm.previous_quantity,sm.new_quantity,sm.note,sm.created_at
+             sm.previous_quantity,sm.new_quantity,sm.previous_cost,sm.new_cost,sm.entry_unit_cost,sm.note,sm.created_at
       from stock_movements sm
       left join products p on p.id=sm.product_id
       order by sm.created_at desc,sm.id desc
@@ -600,13 +610,16 @@ app.get("/api/stock/history",requireAdmin,async(req,res)=>{
 app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
   const quantity=Math.floor(Number(req.body.quantity)||0);
   const note=String(req.body.note||"").trim();
+  const rawEntryCost=req.body.unit_cost;
+  const entryCost=rawEntryCost===""||rawEntryCost===null||rawEntryCost===undefined?null:Number(rawEntryCost);
   if(quantity<=0)return res.status(400).json({error:"Informe uma quantidade de entrada maior que zero."});
+  if(entryCost!==null&&(!Number.isFinite(entryCost)||entryCost<0))return res.status(400).json({error:"Informe um custo unitário válido."});
 
   const c=await pool.connect();
   try{
     await c.query("begin");
     const r=await c.query(
-      "select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",
+      "select id,name,stock_quantity,stock_control,cost_price from products where id=$1 and active=true for update",
       [Number(req.params.id)]
     );
     if(!r.rowCount){
@@ -616,21 +629,27 @@ app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
 
     const p=r.rows[0];
     const previous=Number(p.stock_quantity||0);
+    const previousCost=Number(p.cost_price||0);
     const next=previous+quantity;
+    let nextCost=previousCost;
+    if(entryCost!==null){
+      nextCost=next>0?((previous*previousCost)+(quantity*entryCost))/next:entryCost;
+      nextCost=Math.round(nextCost*100)/100;
+    }
 
     await c.query(
-      "update products set stock_quantity=$1,stock_control=true where id=$2",
-      [next,p.id]
+      "update products set stock_quantity=$1,stock_control=true,cost_price=$2 where id=$3",
+      [next,nextCost,p.id]
     );
 
     await c.query(
-      `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-       values($1,'Entrada',$2,$3,$4,$5)`,
-      [p.id,quantity,previous,next,note]
+      `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note,previous_cost,new_cost,entry_unit_cost)
+       values($1,'Entrada',$2,$3,$4,$5,$6,$7,$8)`,
+      [p.id,quantity,previous,next,note,previousCost,nextCost,entryCost]
     );
 
     await c.query("commit");
-    res.json({ok:true,id:p.id,name:p.name,previous_quantity:previous,entry_quantity:quantity,stock_quantity:next,stock_control:true});
+    res.json({ok:true,id:p.id,name:p.name,previous_quantity:previous,entry_quantity:quantity,stock_quantity:next,stock_control:true,previous_cost:previousCost,entry_unit_cost:entryCost,cost_price:nextCost});
   }catch(e){
     await c.query("rollback");
     console.error(e);
@@ -639,6 +658,7 @@ app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
     c.release();
   }
 });
+
 
 app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
   try{
