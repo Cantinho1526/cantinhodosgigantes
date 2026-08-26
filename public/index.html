@@ -1588,11 +1588,12 @@ async function cashDetails(id){
         '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
         '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
         '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>Contas</small><strong>'+Number(x.count||0)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Total recebido</small><strong>'+R(Number(x.sales_total||x.pix||0))+'</strong></div>'+ 
       '</div>'+ 
-      '<div style="max-height:360px;overflow:auto;margin-top:10px">'+cashReceiptRows(d.receipts||[])+'</div>'+ 
-      (String(s.notes||'').trim()?'<div class="notice" style="margin-top:10px"><b>Observação:</b> '+E(String(s.notes))+'</div>':'')+
-      '<button class="secondary" onclick="closeModal()">Fechar</button>'
+      '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+' conta(s) recebida(s)</b> • Soma detalhada: '+R((d.receipts||[]).reduce((z,r)=>z+Number(r.total||0),0))+'</div>'+ 
+      '<div style="margin-top:12px"><h3 style="margin:0 0 8px;color:#fff">🧾 Recebimentos deste caixa</h3>'+cashReceiptRows(d.receipts||[])+'</div>'+ 
+      (String(s.notes||'').trim()?'<div class="notice" style="margin-top:12px"><b>Observação:</b> '+E(String(s.notes))+'</div>':'')+
+      '<div style="margin-top:14px"><button class="secondary" onclick="closeModal()">Fechar</button></div>'
     );
   }catch(e){alert(e.message)}
 }
