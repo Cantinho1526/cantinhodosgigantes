@@ -1262,44 +1262,54 @@ async function deleteProduct(id,name){
 }
 
 let adminProductSearchTerm="";
-let stockLowOnly=false;
+let stockMode="all";
 
-async function stock(lowOnly){
+async function stock(mode){
   try{
-    if(typeof lowOnly==="boolean")stockLowOnly=lowOnly;
+    if(mode)stockMode=mode;
     const a=await api("/api/stock");
     const controlled=a.filter(p=>p.stock_control);
     const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
+    const noCost=p=>p.stock_control&&Number(p.cost_price||0)<=0;
     const low=controlled.filter(isLow);
-    const visible=stockLowOnly?a.filter(isLow):a;
+    const missingCost=controlled.filter(noCost);
+    const stockValue=controlled.reduce((sum,p)=>sum+Number(p.stock_quantity||0)*Number(p.cost_price||0),0);
+    const visible=stockMode==="low"?a.filter(isLow):(stockMode==="nocost"?a.filter(noCost):a);
+    const modeText=stockMode==="low"?'Mostrando somente produtos controlados que atingiram o limite de estoque baixo.':(stockMode==="nocost"?'Mostrando produtos controlados sem custo cadastrado. Cadastre o custo para que lucro e margem fiquem reais.':'A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque. O custo informado aqui alimenta os relatórios de lucro das próximas vendas.');
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📦 Estoque</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição</div></div></div>'+
+        '<div class="row"><div><h2>📦 Estoque & Custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) controlado(s) • '+low.length+' com estoque baixo • '+missingCost.length+' sem custo</div></div></div>'+
+        '<div class="reportGrid" style="margin-top:12px">'+
+          '<div class="reportBox"><small>Produtos controlados</small><strong>'+controlled.length+'</strong></div>'+
+          '<div class="reportBox"><small>⚠️ Estoque baixo</small><strong>'+low.length+'</strong></div>'+
+          '<div class="reportBox"><small>💰 Sem custo</small><strong>'+missingCost.length+'</strong></div>'+
+          '<div class="reportBox"><small>Valor do estoque a custo</small><strong>'+R(stockValue)+'</strong></div>'+
+        '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0" class="noPrint">'+
-          '<button class="'+(stockLowOnly?'btn':'secondary')+'" onclick="stock(true)">⚠️ Somente estoque baixo ('+low.length+')</button>'+
-          '<button class="'+(!stockLowOnly?'btn':'secondary')+'" onclick="stock(false)">📦 Mostrar todos</button>'+
+          '<button class="'+(stockMode==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
+          '<button class="'+(stockMode==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+missingCost.length+')</button>'+
+          '<button class="'+(stockMode==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+
           '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+
         '</div>'+
-        '<div class="notice">'+(stockLowOnly?'Mostrando somente produtos controlados que atingiram o limite de estoque baixo.':'Ative o controle nos produtos desejados e informe a quantidade atual. A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque.')+'</div>'+
+        '<div class="notice">'+modeText+'</div>'+
         (visible.length?visible.map(p=>{
           const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=isLow(p);
+          const cost=Number(p.cost_price||0), price=Number(p.price||0), value=q*cost;
+          const margin=price>0?((price-cost)/price)*100:0;
           return '<div class="productRow">'+
-            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+
+            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
+              '<div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div>'+
+              '<div style="color:'+(cost>0?'#bbb':'#ffb74d')+';font-size:13px;margin-top:3px">Custo: <b>'+R(cost)+'</b> • Venda: '+R(price)+' • Margem: '+(cost>0?margin.toFixed(1)+'%':'—')+(p.stock_control?' • Valor em estoque: '+R(value):'')+'</div>'+
+            '</div>'+
             '<div class="productActions" style="align-items:center">'+
               '<span style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</span>'+
-              '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button>'+
+              '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar / Custo</button>'+
             '</div></div>';
-        }).join(""):'<div class="empty">Nenhum produto com estoque baixo no momento. ✅</div>')+
+        }).join(''):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
       '</div>';
-    // Ao abrir ou trocar o filtro, leva a tela ao início do painel de estoque,
-    // garantindo que os botões do filtro fiquem visíveis.
-    requestAnimationFrame(()=>{
-      const el=$("adminContent");
-      if(el) el.scrollIntoView({behavior:"auto",block:"start"});
-    });
+    requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
   }catch(e){alert(e.message)}
 }
-
 
 async function stockReplenishmentList(){
   try{
@@ -1315,23 +1325,16 @@ async function stockReplenishmentList(){
         '<div class="reportSection">'+
           (!low.length
             ? '<div class="notice">Nenhum produto precisa de reposição no momento. ✅</div>'
-            : '<div style="overflow:auto"><table class="reportTable" style="width:100%;border-collapse:collapse;min-width:560px">'+
-                '<thead><tr><th>Produto</th><th>Categoria</th><th style="text-align:right">Estoque atual</th><th style="text-align:right">Limite de alerta</th></tr></thead><tbody>'+
-                low.map(p=>
-                  '<tr>'+
-                    '<td><b>'+E(p.emoji||"📦")+' '+E(p.name)+'</b></td>'+
-                    '<td>'+E(p.category||"—")+'</td>'+
-                    '<td style="text-align:right"><b>'+Number(p.stock_quantity||0)+' un.</b></td>'+
-                    '<td style="text-align:right">'+Number(p.stock_low_threshold ?? 5)+' un.</td>'+
-                  '</tr>'
-                ).join("")+
+            : '<div style="overflow:auto"><table class="reportTable" style="width:100%;border-collapse:collapse;min-width:760px">'+
+                '<thead><tr><th>Produto</th><th>Categoria</th><th style="text-align:right">Estoque atual</th><th style="text-align:right">Limite</th><th style="text-align:right">Custo unit.</th><th style="text-align:right">Valor estoque</th></tr></thead><tbody>'+
+                low.map(p=>{
+                  const q=Number(p.stock_quantity||0),cost=Number(p.cost_price||0);
+                  return '<tr><td><b>'+E(p.emoji||"📦")+' '+E(p.name)+'</b></td><td>'+E(p.category||"—")+'</td><td style="text-align:right"><b>'+q+' un.</b></td><td style="text-align:right">'+Number(p.stock_low_threshold ?? 5)+' un.</td><td style="text-align:right">'+R(cost)+'</td><td style="text-align:right"><b>'+R(q*cost)+'</b></td></tr>';
+                }).join('')+
                 '</tbody></table></div>')+
         '</div>'+
       '</div>';
-    requestAnimationFrame(()=>{
-      const el=$("adminContent");
-      if(el)el.scrollIntoView({behavior:"auto",block:"start"});
-    });
+    requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
   }catch(e){alert(e.message)}
 }
 
@@ -1340,22 +1343,26 @@ async function stockHistory(){
     const a=await api("/api/stock/history");
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📋 Histórico de estoque</h2><div style="color:#aaa">Últimas '+a.length+' movimentação(ões)</div></div><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
+        '<div class="row"><div><h2>📋 Histórico de estoque e custos</h2><div style="color:#aaa">Últimas '+a.length+' movimentação(ões)</div></div><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
         (!a.length?'<div class="notice">Nenhuma movimentação de estoque registrada.</div>':
-        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">'+
-          '<thead><tr><th style="text-align:left;padding:10px">Data / hora</th><th style="text-align:left;padding:10px">Produto</th><th style="text-align:left;padding:10px">Movimento</th><th style="text-align:right;padding:10px">Qtd.</th><th style="text-align:center;padding:10px">Estoque</th><th style="text-align:left;padding:10px">Observação</th></tr></thead><tbody>'+
+        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;min-width:920px">'+
+          '<thead><tr><th style="text-align:left;padding:10px">Data / hora</th><th style="text-align:left;padding:10px">Produto</th><th style="text-align:left;padding:10px">Movimento</th><th style="text-align:right;padding:10px">Qtd.</th><th style="text-align:center;padding:10px">Estoque</th><th style="text-align:center;padding:10px">Custo</th><th style="text-align:left;padding:10px">Observação</th></tr></thead><tbody>'+
           a.map(m=>{
-            const d=new Date(m.created_at);
-            const dt=isNaN(d)?'':d.toLocaleString('pt-BR');
+            const d=new Date(m.created_at),dt=isNaN(d)?'':d.toLocaleString('pt-BR');
             const type=String(m.movement_type||'');
             const plus=(type==='Entrada'||type==='Cancelamento');
             const sign=plus?'+':(type==='Venda'||type==='Reativação'?'-':'');
+            const pc=m.previous_cost===null||m.previous_cost===undefined?null:Number(m.previous_cost);
+            const nc=m.new_cost===null||m.new_cost===undefined?null:Number(m.new_cost);
+            const ec=m.entry_unit_cost===null||m.entry_unit_cost===undefined?null:Number(m.entry_unit_cost);
+            const costTxt=(pc===null&&nc===null)?'—':R(pc||0)+' → <b>'+R(nc||0)+'</b>'+(ec!==null?'<div style="color:#aaa;font-size:12px">Compra: '+R(ec)+'</div>':'');
             return '<tr style="border-top:1px solid #333">'+
               '<td style="padding:10px;white-space:nowrap">'+E(dt)+'</td>'+
               '<td style="padding:10px"><b>'+E(m.emoji||'📦')+' '+E(m.product_name||'Produto removido')+'</b></td>'+
               '<td style="padding:10px"><b style="color:#ffd34d">'+E(type)+'</b></td>'+
               '<td style="padding:10px;text-align:right;font-weight:900">'+sign+Number(m.quantity||0)+'</td>'+
               '<td style="padding:10px;text-align:center;white-space:nowrap">'+Number(m.previous_quantity||0)+' → <b>'+Number(m.new_quantity||0)+'</b></td>'+
+              '<td style="padding:10px;text-align:center;white-space:nowrap">'+costTxt+'</td>'+
               '<td style="padding:10px;color:#bbb">'+E(m.note||'—')+'</td>'+
             '</tr>';
           }).join('')+'</tbody></table></div>')+
@@ -1367,17 +1374,22 @@ async function stockForm(id){
   try{
     const a=await api("/api/stock"),p=a.find(x=>x.id===id);
     if(!p)return;
-    modal('<h2>📦 Estoque — '+E(p.name)+'</h2>'+
+    const cost=Number(p.cost_price||0),price=Number(p.price||0),q=Number(p.stock_quantity||0);
+    const margin=price>0?((price-cost)/price)*100:0;
+    modal('<h2>📦 Estoque & custo — '+E(p.name)+'</h2>'+
+      '<div class="notice">Preço de venda: <b>'+R(price)+'</b> • Custo atual: <b>'+R(cost)+'</b> • Margem bruta estimada: <b>'+(cost>0?margin.toFixed(1)+'%':'custo não informado')+'</b></div>'+
       '<div class="field"><label><input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
-      '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+q+'"></div>'+
+      '<div class="field"><label>💰 Custo unitário atual</label><input id="stcost" type="number" min="0" step=".01" value="'+cost+'"></div>'+
       '<div class="field"><label>⚠️ Avisar estoque baixo quando restarem</label><input id="stl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
-      '<div class="notice">Este limite vale somente para este produto. Ex.: 5 significa que o aviso aparece com 5 unidades ou menos.</div>'+
-      '<div class="notice">Use <b>Salvar estoque</b> para correções manuais. Para reposição de mercadoria, prefira a entrada abaixo.</div>'+
+      '<div class="notice">O custo atual é usado nos próximos pedidos. Pedidos antigos preservam o custo que existia no momento da venda.</div>'+
+      '<div class="notice">Use <b>Salvar ajuste manual</b> para corrigir quantidade/custo. Para compras e reposições, prefira a entrada abaixo.</div>'+
       '<hr style="border:0;border-top:1px solid #333;margin:18px 0">'+
       '<h3>➕ Entrada de estoque</h3>'+
       '<div class="field"><label>Quantidade que está entrando</label><input id="ste" type="number" min="1" step="1" placeholder="Ex.: 20"></div>'+
-      '<div class="field"><label>Observação (opcional)</label><input id="sten" placeholder="Ex.: Compra / reposição"></div>'+
-      '<div class="notice">Estoque atual: <b>'+Number(p.stock_quantity||0)+'</b>. A entrada será somada automaticamente.</div>'+
+      '<div class="field"><label>💰 Custo unitário desta compra (opcional)</label><input id="stecost" type="number" min="0" step=".01" placeholder="Ex.: 3,50"></div>'+
+      '<div class="field"><label>Observação (opcional)</label><input id="sten" placeholder="Ex.: Compra / fornecedor / nota"></div>'+
+      '<div class="notice">Se informar o custo da compra, o sistema recalcula automaticamente o <b>custo médio ponderado</b>. Estoque atual: <b>'+q+' un.</b> • Valor atual a custo: <b>'+R(q*cost)+'</b>.</div>'+
       '<button class="btn" onclick="stockEntry('+id+')">➕ Registrar entrada</button> '+
       '<button class="secondary" onclick="saveStock('+id+')">Salvar ajuste manual</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>');
@@ -1386,29 +1398,25 @@ async function stockForm(id){
 
 async function saveStock(id){
   try{
-    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0)),stock_low_threshold:Math.max(0,Math.floor(Number($("stl").value)||0))})});
+    const cost=Math.max(0,Number($("stcost").value)||0);
+    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0)),stock_low_threshold:Math.max(0,Math.floor(Number($("stl").value)||0)),cost_price:cost})});
     closeModal();stock();
   }catch(e){alert(e.message)}
 }
-
 
 async function stockEntry(id){
   try{
     const quantity=Math.floor(Number($("ste").value)||0);
     if(quantity<=0){alert("Informe uma quantidade maior que zero.");return}
     const note=$("sten").value.trim();
-
-    if(!confirm("Registrar entrada de "+quantity+" unidade(s) no estoque?"))return;
-
-    const r=await api("/api/stock/"+id+"/entry",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({quantity,note})
-    });
-
-    alert("Entrada registrada! Estoque: "+r.previous_quantity+" → "+r.stock_quantity+" un.");
-    closeModal();
-    stock();
+    const rawCost=$("stecost").value.trim().replace(",",".");
+    const unitCost=rawCost===""?null:Number(rawCost);
+    if(unitCost!==null&&(!Number.isFinite(unitCost)||unitCost<0)){alert("Informe um custo unitário válido.");return}
+    const costMsg=unitCost===null?'':(' com custo unitário de '+R(unitCost));
+    if(!confirm("Registrar entrada de "+quantity+" unidade(s)"+costMsg+"?"))return;
+    const r=await api("/api/stock/"+id+"/entry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({quantity,note,unit_cost:unitCost})});
+    alert("Entrada registrada! Estoque: "+r.previous_quantity+" → "+r.stock_quantity+" un.\nCusto médio atual: "+R(r.cost_price||0));
+    closeModal();stock();
   }catch(e){alert(e.message)}
 }
 
