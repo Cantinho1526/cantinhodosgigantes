@@ -939,13 +939,85 @@ async function productForm(id){
       '</select></div>'+
       '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
       '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
-      '<div class="field"><label>URL da foto (opcional)</label><input id="pi" value="'+E(p.image||"")+'"></div>'+
+      '<div class="field"><label>📷 Foto do produto</label>'+
+        '<input id="pi" value="'+E(p.image||"")+'" placeholder="URL da foto (opcional)" style="margin-bottom:8px">'+
+        '<input id="pfile" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="chooseProductPhoto(this)">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button type="button" class="secondary" onclick="document.getElementById(\'pfile\').click()">📷 Escolher foto do celular/computador</button>'+
+          '<button type="button" class="secondary" onclick="removeProductPhoto()">🗑️ Remover foto</button>'+
+        '</div>'+
+        '<div id="photoPreviewWrap" style="margin-top:10px;'+(p.image?'':'display:none;')+'">'+
+          '<img id="photoPreview" src="'+E(p.image||'')+'" alt="Prévia da foto" style="width:100%;max-height:240px;object-fit:cover;border-radius:12px;border:1px solid #4a3b00">'+
+        '</div>'+
+        '<div style="font-size:12px;color:#aaa;margin-top:7px">Você pode escolher uma foto diretamente do aparelho. O sistema reduz a imagem automaticamente antes de salvar.</div>'+
+      '</div>'+
       '<div class="field"><label><input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
       '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
   }catch(e){alert(e.message)}
+}
+
+async function chooseProductPhoto(input){
+  try{
+    const file=input.files&&input.files[0];
+    if(!file)return;
+    if(!/^image\/(jpeg|png|webp)$/i.test(file.type)){
+      alert("Escolha uma imagem JPG, PNG ou WEBP.");
+      input.value="";
+      return;
+    }
+    if(file.size>12*1024*1024){
+      alert("A foto é muito grande. Escolha uma imagem de até 12 MB.");
+      input.value="";
+      return;
+    }
+    const dataUrl=await resizeProductPhoto(file);
+    $("pi").value=dataUrl;
+    const img=$("photoPreview"),wrap=$("photoPreviewWrap");
+    if(img)img.src=dataUrl;
+    if(wrap)wrap.style.display="block";
+  }catch(e){
+    console.error(e);
+    alert("Não foi possível preparar a foto. Tente outra imagem.");
+  }
+}
+
+function resizeProductPhoto(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=reject;
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=reject;
+      img.onload=()=>{
+        const max=1200;
+        let w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+        if(w>max||h>max){
+          const scale=Math.min(max/w,max/h);
+          w=Math.max(1,Math.round(w*scale));
+          h=Math.max(1,Math.round(h*scale));
+        }
+        const canvas=document.createElement("canvas");
+        canvas.width=w;canvas.height=h;
+        const ctx=canvas.getContext("2d");
+        ctx.drawImage(img,0,0,w,h);
+        // JPEG oferece arquivo menor e é ideal para fotos do cardápio.
+        resolve(canvas.toDataURL("image/jpeg",0.82));
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function removeProductPhoto(){
+  const input=$("pi"),file=$("pfile"),img=$("photoPreview"),wrap=$("photoPreviewWrap");
+  if(input)input.value="";
+  if(file)file.value="";
+  if(img)img.removeAttribute("src");
+  if(wrap)wrap.style.display="none";
 }
 
 async function saveProduct(id){
