@@ -20,7 +20,7 @@ const pool=new Pool({
   ssl:{rejectUnauthorized:false}
 });
 
-app.use(express.json({limit:"1mb"}));
+app.use(express.json({limit:"5mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const ADMIN_SESSION_HOURS=12;
