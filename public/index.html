@@ -1527,28 +1527,38 @@ async function closeCashForm(id){
     }
 
     const receiptTotal=receipts.reduce((sum,r)=>sum+Number(r.total||0),0);
-    const sourceCheck=(Number(x.mercado_pago_pix||0)+Number(x.manual_pix||0));
-    const integrityOk=Math.abs(receiptTotal-Number(x.sales_total||0))<0.01 && Math.abs(sourceCheck-Number(x.pix||0))<0.01;
+    const mercadoPagoPix=Number(x.mercado_pago_pix||0);
+    const manualPix=Number(x.manual_pix||0);
+    const pixTotal=Number(x.pix||0);
+    const salesTotal=Number(x.sales_total||0);
+    const sourceCheck=mercadoPagoPix+manualPix;
+    const diffSources=sourceCheck-pixTotal;
+    const diffList=receiptTotal-salesTotal;
+    const diffSales=pixTotal-salesTotal;
+    const integrityOk=Math.abs(diffSources)<0.01 && Math.abs(diffList)<0.01 && Math.abs(diffSales)<0.01;
+    const integrityHtml=integrityOk
+      ?'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#0d4027;border:1px solid #197548;color:#d9ffea;font-weight:800">✅ Conferência financeira consistente</div>'
+      :'<div style="margin-top:10px;padding:12px;border-radius:10px;background:#5a1a1a;border:1px solid #b83333;color:#ffdede;font-weight:800">⚠️ Divergência financeira encontrada.<div style="font-weight:500;margin-top:7px;line-height:1.45">Origens PIX − PIX total: <b>'+R(diffSources)+'</b><br>Lista de recebimentos − Total vendido: <b>'+R(diffList)+'</b><br>PIX total − Total vendido: <b>'+R(diffSales)+'</b></div><div style="margin-top:7px">O fechamento foi bloqueado até a conferência dos valores.</div></div>';
 
     modal(
-      '<h2>💰 Conferência completa do caixa</h2>'+ 
+      '<h2>💰 Conferência de fechamento</h2>'+ 
       '<div class="notice">Aberto em <b>'+new Date(s.opened_at).toLocaleString("pt-BR")+'</b> • Fundo inicial: <b>'+R(Number(s.opening_amount||0))+'</b></div>'+ 
       '<div class="cashSummary" style="margin-top:10px">'+
-        '<div class="cashBox"><small>💎 PIX Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>Total vendido</small><strong>'+R(Number(x.sales_total||0))+'</strong></div>'+ 
+        '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(mercadoPagoPix)+'</strong></div>'+ 
+        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(manualPix)+'</strong></div>'+ 
+        '<div class="cashBox"><small>PIX total</small><strong>'+R(pixTotal)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Total vendido</small><strong>'+R(salesTotal)+'</strong></div>'+ 
       '</div>'+ 
-      '<div class="notice" style="margin-top:10px"><b>Contas recebidas:</b> '+Number(x.count||0)+' • <b>Soma da lista:</b> '+R(receiptTotal)+'</div>'+ 
-      (integrityOk
-        ?'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#0d4027;border:1px solid #197548;color:#d9ffea;font-weight:800">✅ Conferência financeira consistente</div>'
-        :'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#5a1a1a;border:1px solid #b83333;color:#ffdede;font-weight:800">⚠️ Divergência encontrada. Não confirme o fechamento e confira os recebimentos.</div>')+
+      '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+' conta(s)</b> recebida(s) • Soma da lista: <b>'+R(receiptTotal)+'</b></div>'+ 
+      integrityHtml+
       '<h3 style="margin:18px 0 6px">🧾 Contas incluídas neste fechamento</h3>'+ 
-      '<div style="max-height:260px;overflow:auto;border:1px solid #333;border-radius:12px;padding:0 10px">'+cashReceiptRows(receipts)+'</div>'+ 
-      '<div class="field" style="margin-top:14px"><label>Observação (opcional)</label><textarea id="cashNote" placeholder="Ex.: conferido por Sandra, sem divergências"></textarea></div>'+ 
-      '<div class="notice" style="margin-top:10px">Ao confirmar, este caixa será encerrado com <b>'+R(Number(x.sales_total||0))+'</b> em vendas e <b>'+Number(x.count||0)+'</b> conta(s) recebida(s).</div>'+ 
-      '<button class="btn" '+(integrityOk?'':'disabled style="opacity:.45;cursor:not-allowed"')+' onclick="closeCash('+id+')">✅ Confirmar fechamento</button> '+
-      '<button class="secondary" onclick="closeModal()">Voltar</button>'
+      '<div style="border:1px solid #333;border-radius:12px;padding:0 10px">'+cashReceiptRows(receipts)+'</div>'+ 
+      '<div class="field" style="margin-top:16px"><label>Observação (opcional)</label><textarea id="cashNote" placeholder="Ex.: conferido, sem divergências"></textarea></div>'+ 
+      '<div class="notice" style="margin-top:10px">Ao confirmar, este caixa será encerrado com <b>'+R(salesTotal)+'</b> em vendas e <b>'+Number(x.count||0)+'</b> conta(s) recebida(s).</div>'+ 
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+
+        '<button class="btn" '+(integrityOk?'':'disabled style="opacity:.45;cursor:not-allowed"')+' onclick="closeCash('+id+')">✅ Confirmar fechamento</button>'+
+        '<button class="secondary" onclick="closeModal()">Cancelar</button>'+
+      '</div>'
     );
   }catch(e){alert(e.message)}
 }
