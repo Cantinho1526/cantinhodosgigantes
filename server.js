@@ -1582,7 +1582,12 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         a.id,
         a.payment_method,
         a.closed_at,
-        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric as total
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric as total,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
       from table_accounts a
       left join orders o on o.account_id=a.id
       where a.status='Fechada'
@@ -1592,11 +1597,15 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       order by a.closed_at
     `,[start,end])).rows;
 
-    let pix=0,dinheiro=0,cartao=0,total=0;
+    let pix=0,dinheiro=0,cartao=0,total=0,mercadoPagoPix=0,manualPix=0;
     for(const a of accounts){
       const value=Number(a.total);
       total+=value;
-      if(a.payment_method==="PIX")pix+=value;
+      if(a.payment_method==="PIX"){
+        pix+=value;
+        if(a.mercado_pago_verified)mercadoPagoPix+=value;
+        else manualPix+=value;
+      }
       else if(a.payment_method==="Dinheiro")dinheiro+=value;
       else if(a.payment_method==="Cartão")cartao+=value;
     }
@@ -1651,6 +1660,8 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       summary:{
         total,
         pix,
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
         dinheiro,
         cartao,
         contas,
@@ -1696,7 +1707,12 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
     const accounts=(await pool.query(`
       select a.id,a.table_number,a.payment_method,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
-        count(o.id) filter(where o.status<>'Cancelado')::int order_count
+        count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
       from table_accounts a
       left join orders o on o.account_id=a.id
       where a.status='Fechada'
@@ -1739,18 +1755,34 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
       order by closed_at desc
     `,[date])).rows;
 
+    const normalizedAccounts=accounts.map(x=>({
+      ...x,
+      total:Number(x.total),
+      order_count:Number(x.order_count||0),
+      payment_source:x.payment_method==='PIX'?(x.mercado_pago_verified?'Mercado Pago':'PIX manual'):(x.payment_method||'-')
+    }));
+    const mercadoPagoPix=normalizedAccounts.filter(x=>x.payment_method==='PIX'&&x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const manualPix=normalizedAccounts.filter(x=>x.payment_method==='PIX'&&!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const itens=products.reduce((z,x)=>z+Number(x.quantity||0),0);
+    const totalValue=Number(summary.total);
+    const contasCount=Number(summary.contas||0);
+
     res.json({
       date,
       summary:{
-        total:Number(summary.total),
+        total:totalValue,
         pix:Number(summary.pix),
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
         dinheiro:Number(summary.dinheiro),
         cartao:Number(summary.cartao),
-        contas:summary.contas,
+        contas:contasCount,
+        ticket_medio:contasCount?totalValue/contasCount:0,
+        itens,
         custo:Number(financial.cost),
-        lucro_bruto:Number(summary.total)-Number(financial.cost)
+        lucro_bruto:totalValue-Number(financial.cost)
       },
-      accounts:accounts.map(x=>({...x,total:Number(x.total)})),
+      accounts:normalizedAccounts,
       products:products.map(x=>({...x,total:Number(x.total)})),
       cash
     });
