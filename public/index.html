@@ -40,6 +40,24 @@ button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
 .modal{position:fixed;inset:0;background:#000b;display:grid;place-items:center;z-index:50;padding:14px}
 .modalBox{width:min(540px,100%);max-height:90vh;overflow:auto;background:#151515;border:1px solid #6b5200;border-radius:18px;padding:20px}
 .modalBox h2{color:#ffd34d;margin-top:0}
+
+.quickCostModalBox{width:min(900px,100%);overflow-x:hidden}
+.quickCostViewport{max-height:82vh;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.quickCostRow{display:grid;grid-template-columns:minmax(0,1.7fr) 110px 150px 110px;gap:12px;align-items:center;padding:12px 4px;border-top:1px solid #333;min-width:0}
+.quickCostRow>*{min-width:0}
+.quickCostInput{width:100%;min-width:0;box-sizing:border-box}
+.quickCostFooter{position:sticky;bottom:0;background:#171717;border-top:1px solid #444;padding:14px 0 4px;margin-top:10px}
+.quickCostMargin.good{color:#55d98b!important}.quickCostMargin.warn{color:#ffd34d!important}.quickCostMargin.bad{color:#ff7b7b!important}
+@media(max-width:720px){
+  .quickCostModalBox{width:100%}
+  .quickCostRow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px 12px}
+  .quickCostProduct{grid-column:1/-1}
+  .quickCostMarginWrap{grid-column:auto}
+}
+@media(max-width:460px){
+  .quickCostRow{grid-template-columns:1fr}
+  .quickCostProduct,.quickCostMarginWrap{grid-column:auto}
+}
 .field{margin-bottom:11px}.field label{display:block;font-size:12px;font-weight:800;color:#ddd;margin-bottom:5px}
 input,textarea,select{width:100%;background:#0c0c0c;color:#fff;border:1px solid #3b3b3b;border-radius:9px;padding:11px}
 textarea{min-height:88px}
@@ -1018,9 +1036,9 @@ async function stockCostQuick(){
       return String(x.category||'').localeCompare(String(y.category||''),'pt-BR')||String(x.name||'').localeCompare(String(y.name||''),'pt-BR');
     });
     modal(
-      '<div style="max-height:82vh;overflow:auto;padding-right:4px">'+
+      '<div class="quickCostViewport">'+
       '<div class="row"><div><h2>💰 Cadastro rápido de custos</h2><div style="color:#aaa">'+noCost.length+' produto(s) ainda sem custo cadastrado</div></div></div>'+
-      '<div class="notice">Preencha somente o <b>custo unitário</b>. O preço de venda continua vindo do Cardápio. Você pode cadastrar vários produtos e salvar tudo de uma vez.</div>'+
+      '<div class="notice">Preencha somente o <b>custo unitário</b>. O preço de venda continua vindo do Cardápio. A margem é recalculada enquanto você digita.</div>'+
       '<div style="margin:14px 0;display:flex;gap:8px;flex-wrap:wrap">'+
         '<button class="secondary" onclick="costQuickShowOnlyMissing()">Mostrar somente sem custo</button>'+
         '<button class="secondary" onclick="costQuickShowAll()">Mostrar todos</button>'+
@@ -1028,25 +1046,33 @@ async function stockCostQuick(){
       '<div id="quickCostList">'+ordered.map(p=>{
         const cost=Number(p.cost_price||0), price=Number(p.price||0), missing=cost<=0;
         const margin=price>0&&cost>0?((price-cost)/price*100):null;
-        return '<div class="quickCostRow" data-missing="'+(missing?'1':'0')+'" data-id="'+p.id+'" style="display:grid;grid-template-columns:minmax(220px,1.6fr) 120px 160px 120px;gap:12px;align-items:center;padding:12px 4px;border-top:1px solid #333">'+
-          '<div><b>'+E(p.emoji||'🍽️')+' '+E(p.name)+'</b><div style="color:#999;font-size:13px">'+E(p.category||'')+'</div></div>'+
+        const cls=margin===null?'warn':(margin>=50?'good':(margin>=30?'warn':'bad'));
+        return '<div class="quickCostRow" data-missing="'+(missing?'1':'0')+'" data-id="'+p.id+'">'+
+          '<div class="quickCostProduct"><b>'+E(p.emoji||'🍽️')+' '+E(p.name)+'</b><div style="color:#999;font-size:13px">'+E(p.category||'')+'</div></div>'+
           '<div><small style="color:#999">Venda</small><div style="font-weight:900">'+R(price)+'</div></div>'+
-          '<div><small style="color:#999">Custo unitário</small><input class="quickCostInput" data-id="'+p.id+'" type="number" min="0" step="0.01" value="'+(cost>0?cost.toFixed(2):'')+'" placeholder="R$ 0,00" style="width:100%"></div>'+
-          '<div><small style="color:#999">Margem atual</small><div id="qcm_'+p.id+'" style="font-weight:900;color:'+(missing?'#ffb74d':'#ffd34d')+'">'+(margin===null?'—':margin.toFixed(1).replace('.',',')+'%')+'</div></div>'+
+          '<div><small style="color:#999">Custo unitário</small><input class="quickCostInput" data-id="'+p.id+'" data-original="'+(cost>0?cost.toFixed(2):'')+'" type="number" min="0" step="0.01" value="'+(cost>0?cost.toFixed(2):'')+'" placeholder="R$ 0,00"></div>'+
+          '<div class="quickCostMarginWrap"><small style="color:#999">Margem</small><div id="qcm_'+p.id+'" class="quickCostMargin '+cls+'" style="font-weight:900">'+(margin===null?'—':margin.toFixed(1).replace('.',',')+'%')+'</div></div>'+
         '</div>';
       }).join('')+'</div>'+
-      '<div style="position:sticky;bottom:0;background:#171717;border-top:1px solid #444;padding:14px 0 4px;margin-top:10px">'+
-        '<div id="quickCostStatus" style="color:#aaa;margin-bottom:10px">Altere os custos desejados e clique em Salvar todos.</div>'+
-        '<button class="btn" onclick="saveQuickCosts()">✅ Salvar todos</button> '+
+      '<div class="quickCostFooter">'+
+        '<div id="quickCostStatus" style="color:#aaa;margin-bottom:10px">Nenhum produto alterado.</div>'+
+        '<button id="quickCostSaveBtn" class="btn" onclick="saveQuickCosts()" disabled>✅ Salvar alterações</button> '+
         '<button class="secondary" onclick="closeModal()">Cancelar</button>'+
       '</div></div>'
     );
+    const box=document.querySelector('#modal .modalBox'); if(box)box.classList.add('quickCostModalBox');
     costQuickShowOnlyMissing();
     document.querySelectorAll('.quickCostInput').forEach(inp=>inp.addEventListener('input',()=>{
       const id=Number(inp.dataset.id), p=a.find(x=>Number(x.id)===id), price=Number(p&&p.price||0), cost=Math.max(0,Number(inp.value)||0);
       const el=document.getElementById('qcm_'+id);
-      if(el)el.textContent=(price>0&&cost>0)?(((price-cost)/price*100).toFixed(1).replace('.',',')+'%'):'—';
+      if(el){
+        const margin=(price>0&&cost>0)?((price-cost)/price*100):null;
+        el.textContent=margin===null?'—':(margin.toFixed(1).replace('.',',')+'%');
+        el.className='quickCostMargin '+(margin===null?'warn':(margin>=50?'good':(margin>=30?'warn':'bad')));
+      }
+      updateQuickCostSummary();
     }));
+    updateQuickCostSummary();
   }catch(e){alert(e.message)}
 }
 
@@ -1056,16 +1082,30 @@ function costQuickShowOnlyMissing(){
 function costQuickShowAll(){
   document.querySelectorAll('.quickCostRow').forEach(el=>el.style.display='grid');
 }
+function quickCostChangedInputs(){
+  return [...document.querySelectorAll('.quickCostInput')].filter(i=>{
+    const current=String(i.value).trim();
+    const original=String(i.dataset.original||'').trim();
+    if(current===''&&original==='')return false;
+    const a=current===''?0:Number(current), b=original===''?0:Number(original);
+    return Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)>0.0001;
+  });
+}
+function updateQuickCostSummary(){
+  const changed=quickCostChangedInputs();
+  const status=document.getElementById('quickCostStatus');
+  const btn=document.getElementById('quickCostSaveBtn');
+  if(status)status.innerHTML=changed.length?'<b style="color:#ffd34d">'+changed.length+' produto(s) alterado(s)</b> aguardando salvamento.':'Nenhum produto alterado.';
+  if(btn)btn.disabled=changed.length===0;
+}
 
 async function saveQuickCosts(){
   try{
-    const inputs=[...document.querySelectorAll('.quickCostInput')];
-    const items=inputs
-      .filter(i=>String(i.value).trim()!=='')
-      .map(i=>({id:Number(i.dataset.id),cost_price:Math.max(0,Number(i.value)||0)}));
-    if(!items.length){alert('Informe pelo menos um custo antes de salvar.');return}
+    const inputs=quickCostChangedInputs();
+    const items=inputs.map(i=>({id:Number(i.dataset.id),cost_price:Math.max(0,Number(i.value)||0)}));
+    if(!items.length){alert('Nenhum custo foi alterado.');return}
     if(items.some(x=>!Number.isFinite(x.cost_price))){alert('Existe um custo inválido. Confira os valores.');return}
-    if(!confirm('Salvar o custo de '+items.length+' produto(s)?'))return;
+    if(!confirm('Salvar a alteração de custo de '+items.length+' produto(s)?'))return;
     const status=document.getElementById('quickCostStatus'); if(status)status.textContent='Salvando custos...';
     const r=await api('/api/stock/costs/bulk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
     alert((r.updated||items.length)+' custo(s) atualizado(s) com sucesso.');
