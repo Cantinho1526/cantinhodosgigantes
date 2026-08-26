@@ -1461,6 +1461,64 @@ app.get("/api/cash/history",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar histórico do caixa."})}
 });
 
+app.get("/api/cash/:id/details",requireAdmin,async(req,res)=>{
+  try{
+    const session=(await pool.query(
+      `select * from cash_sessions where id=$1 limit 1`,
+      [Number(req.params.id)]
+    )).rows[0];
+    if(!session)return res.status(404).json({error:"Caixa não encontrado."});
+
+    const end=session.closed_at||new Date();
+    const receipts=(await pool.query(`
+      select
+        a.id,
+        a.table_number,
+        a.account_type,
+        a.customer_name,
+        a.closed_at,
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+        count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+        and a.payment_method='PIX'
+        and a.closed_at >= $1
+        and a.closed_at <= $2
+      group by a.id
+      order by a.closed_at asc,a.id asc
+    `,[session.opened_at,end])).rows.map(x=>({
+      ...x,
+      total:Number(x.total),
+      order_count:Number(x.order_count||0),
+      payment_source:x.mercado_pago_verified?'Mercado Pago':'PIX manual'
+    }));
+
+    const mercadoPagoPix=receipts.filter(x=>x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const manualPix=receipts.filter(x=>!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const total=mercadoPagoPix+manualPix;
+    res.json({
+      session,
+      summary:{
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
+        pix:total,
+        sales_total:total,
+        count:receipts.length
+      },
+      receipts
+    });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao carregar detalhes do caixa."});
+  }
+});
+
 app.get("/api/stats",requireAdmin,async(req,res)=>{
   try{
     // Corrige automaticamente comandas PIX que já foram pagas no Mercado Pago,
