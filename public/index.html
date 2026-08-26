@@ -982,6 +982,7 @@ async function stock(filter){
           '<button class="'+(stockFilter==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
           '<button class="'+(stockFilter==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+noCost.length+')</button>'+
           '<button class="'+(stockFilter==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+
+          '<button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button>'+
           '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+
         '</div>'+
         '<div class="notice">Cadastre o custo unitário para acompanhar margem e valor do estoque. O preço de venda continua vindo do Cardápio e não é alterado nesta tela.</div>'+
@@ -1003,6 +1004,72 @@ async function stock(filter){
         }).join(""):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
       '</div>';
     requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
+  }catch(e){alert(e.message)}
+}
+
+
+async function stockCostQuick(){
+  try{
+    const a=await api("/api/stock");
+    const noCost=a.filter(p=>Number(p.cost_price||0)<=0);
+    const ordered=[...a].sort((x,y)=>{
+      const ax=Number(x.cost_price||0)<=0?0:1, ay=Number(y.cost_price||0)<=0?0:1;
+      if(ax!==ay)return ax-ay;
+      return String(x.category||'').localeCompare(String(y.category||''),'pt-BR')||String(x.name||'').localeCompare(String(y.name||''),'pt-BR');
+    });
+    modal(
+      '<div style="max-height:82vh;overflow:auto;padding-right:4px">'+
+      '<div class="row"><div><h2>💰 Cadastro rápido de custos</h2><div style="color:#aaa">'+noCost.length+' produto(s) ainda sem custo cadastrado</div></div></div>'+
+      '<div class="notice">Preencha somente o <b>custo unitário</b>. O preço de venda continua vindo do Cardápio. Você pode cadastrar vários produtos e salvar tudo de uma vez.</div>'+
+      '<div style="margin:14px 0;display:flex;gap:8px;flex-wrap:wrap">'+
+        '<button class="secondary" onclick="costQuickShowOnlyMissing()">Mostrar somente sem custo</button>'+
+        '<button class="secondary" onclick="costQuickShowAll()">Mostrar todos</button>'+
+      '</div>'+
+      '<div id="quickCostList">'+ordered.map(p=>{
+        const cost=Number(p.cost_price||0), price=Number(p.price||0), missing=cost<=0;
+        const margin=price>0&&cost>0?((price-cost)/price*100):null;
+        return '<div class="quickCostRow" data-missing="'+(missing?'1':'0')+'" data-id="'+p.id+'" style="display:grid;grid-template-columns:minmax(220px,1.6fr) 120px 160px 120px;gap:12px;align-items:center;padding:12px 4px;border-top:1px solid #333">'+
+          '<div><b>'+E(p.emoji||'🍽️')+' '+E(p.name)+'</b><div style="color:#999;font-size:13px">'+E(p.category||'')+'</div></div>'+
+          '<div><small style="color:#999">Venda</small><div style="font-weight:900">'+R(price)+'</div></div>'+
+          '<div><small style="color:#999">Custo unitário</small><input class="quickCostInput" data-id="'+p.id+'" type="number" min="0" step="0.01" value="'+(cost>0?cost.toFixed(2):'')+'" placeholder="R$ 0,00" style="width:100%"></div>'+
+          '<div><small style="color:#999">Margem atual</small><div id="qcm_'+p.id+'" style="font-weight:900;color:'+(missing?'#ffb74d':'#ffd34d')+'">'+(margin===null?'—':margin.toFixed(1).replace('.',',')+'%')+'</div></div>'+
+        '</div>';
+      }).join('')+'</div>'+
+      '<div style="position:sticky;bottom:0;background:#171717;border-top:1px solid #444;padding:14px 0 4px;margin-top:10px">'+
+        '<div id="quickCostStatus" style="color:#aaa;margin-bottom:10px">Altere os custos desejados e clique em Salvar todos.</div>'+
+        '<button class="btn" onclick="saveQuickCosts()">✅ Salvar todos</button> '+
+        '<button class="secondary" onclick="closeModal()">Cancelar</button>'+
+      '</div></div>'
+    );
+    costQuickShowOnlyMissing();
+    document.querySelectorAll('.quickCostInput').forEach(inp=>inp.addEventListener('input',()=>{
+      const id=Number(inp.dataset.id), p=a.find(x=>Number(x.id)===id), price=Number(p&&p.price||0), cost=Math.max(0,Number(inp.value)||0);
+      const el=document.getElementById('qcm_'+id);
+      if(el)el.textContent=(price>0&&cost>0)?(((price-cost)/price*100).toFixed(1).replace('.',',')+'%'):'—';
+    }));
+  }catch(e){alert(e.message)}
+}
+
+function costQuickShowOnlyMissing(){
+  document.querySelectorAll('.quickCostRow').forEach(el=>el.style.display=el.dataset.missing==='1'?'grid':'none');
+}
+function costQuickShowAll(){
+  document.querySelectorAll('.quickCostRow').forEach(el=>el.style.display='grid');
+}
+
+async function saveQuickCosts(){
+  try{
+    const inputs=[...document.querySelectorAll('.quickCostInput')];
+    const items=inputs
+      .filter(i=>String(i.value).trim()!=='')
+      .map(i=>({id:Number(i.dataset.id),cost_price:Math.max(0,Number(i.value)||0)}));
+    if(!items.length){alert('Informe pelo menos um custo antes de salvar.');return}
+    if(items.some(x=>!Number.isFinite(x.cost_price))){alert('Existe um custo inválido. Confira os valores.');return}
+    if(!confirm('Salvar o custo de '+items.length+' produto(s)?'))return;
+    const status=document.getElementById('quickCostStatus'); if(status)status.textContent='Salvando custos...';
+    const r=await api('/api/stock/costs/bulk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+    alert((r.updated||items.length)+' custo(s) atualizado(s) com sucesso.');
+    closeModal();stock('all');
   }catch(e){alert(e.message)}
 }
 
