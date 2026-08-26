@@ -18,19 +18,6 @@ button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
 .hero{background:radial-gradient(circle at 15% 10%,#2e2400 0,#151515 34%,#080808 75%);border:1px solid #604b00;border-radius:22px;padding:32px;box-shadow:0 10px 35px #0008}
 .hero h1{font-size:38px;margin:0 0 8px;color:#ffd34d}
 .hero p{color:#ddd;margin-bottom:6px}
-.heroLogo{
-  display:block;
-  width:min(220px,52vw);
-  height:auto;
-  max-height:180px;
-  object-fit:contain;
-  margin:0 auto 14px;
-  border-radius:50%;
-}
-@media(max-width:600px){
-  .hero{padding:20px 14px}
-  .heroLogo{width:min(160px,48vw);max-height:150px}
-}
 .tableTag{display:inline-block;background:#2a2100;color:#ffd34d;border:1px solid #765b00;padding:8px 12px;border-radius:999px;margin-top:8px;font-weight:800}
 .tabs{display:flex;gap:8px;overflow:auto;margin:18px 0;padding-bottom:4px}
 .tabs button{background:#181818;color:#ddd;border:1px solid #333;white-space:nowrap}
@@ -67,16 +54,6 @@ textarea{min-height:88px}
 .productRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #2a2a2a}
 .productRow:last-child{border-bottom:0}
 .productActions{display:flex;gap:7px;flex-wrap:wrap}
-.adminProductSearch{display:flex;gap:8px;align-items:center;margin:12px 0 16px}
-.adminProductSearch input{flex:1}
-.adminProductSearch button{white-space:nowrap}
-
-
-.productPhotoAdmin{width:100%;max-width:360px;height:210px;object-fit:cover;border-radius:14px;border:1px solid #3b3b3b;background:#0b0b0b;display:block;margin:8px 0 10px}
-.photoHelp{font-size:12px;color:#aaa;margin-top:6px;line-height:1.4}
-.photoPicker{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.photoPicker input[type=file]{padding:9px;background:#0c0c0c;border:1px solid #3b3b3b;border-radius:9px;color:#fff}
-
 .qrGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
 .qrCard{background:#fff;color:#111;border-radius:15px;padding:15px;text-align:center}
 .qrCard img{width:180px;max-width:100%}.qrCard h3{margin:4px 0 10px}.qrCard p{font-size:12px;word-break:break-all}
@@ -96,7 +73,7 @@ textarea{min-height:88px}
 .badgeClosed{display:inline-block;background:#12351f;color:#86efac;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:800}
 .billOrder{padding:10px 0;border-bottom:1px solid #2a2a2a}
 .billOrder:last-child{border-bottom:0}
-.paymentGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}
+.paymentGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
 .paymentGrid button{background:#232323;color:#fff;border:1px solid #3b3b3b}
  .paymentGrid button.selected{background:#ffbf00;color:#111;border-color:#ffbf00;font-weight:900}
 .cashSummary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
@@ -204,7 +181,6 @@ textarea{min-height:88px}
 .ageYesterday{background:#4a3c00;color:#ffe477;border:1px solid #806800}
 .ageRecent{background:#4a2600;color:#ffc078;border:1px solid #8b4b00}
 .ageOld{background:#4b1212;color:#ff9d9d;border:1px solid #8d2424}
-.accountSearch{display:flex;gap:8px;align-items:center;margin:12px 0 16px}.accountSearch input{flex:1}.accountType{font-size:12px;color:#aaa;margin-top:4px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -224,20 +200,13 @@ textarea{min-height:88px}
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
 let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
-let pixAutoTimer=null,pixAutoBusy=false,pixAutoPaymentId=null,pixAutoStartedAt=0;
 
 try{
   const saved=JSON.parse(sessionStorage.getItem("cg_pending_order_alerts")||"[]");
   if(Array.isArray(saved))newOrderQueue=saved;
 }catch(_e){newOrderQueue=[]}
 
-function sortPendingAlerts(){
-  // O alerta sempre prioriza o pedido pendente mais novo.
-  // Evita que um pedido antigo salvo na sessão fique preso no canto da tela.
-  newOrderQueue.sort((a,b)=>(Number(b.id)||0)-(Number(a.id)||0));
-}
 function savePendingAlerts(){
-  sortPendingAlerts();
   sessionStorage.setItem("cg_pending_order_alerts",JSON.stringify(newOrderQueue));
 }
 function stopOrderWatch(){
@@ -296,11 +265,9 @@ function showOrderAlert(o,isTest=false){
   div.id="newOrderToast";
   div.className="newOrderToast";
   const items=(o.items||[]).map(i=>i.quantity+'x '+E(i.name)).join(' • ');
-  const paidWaiting=!isTest && (o.account_status==='Fechada' || o.pix_verified);
-  const alertTitle=isTest?'TESTE DO ALERTA':(paidWaiting?'PEDIDO PAGO • AGUARDANDO ACEITE!':'NOVO PEDIDO!');
   div.innerHTML=
-    '<h3>🔔 '+alertTitle+'</h3>'+
-    '<p><b>Pedido #'+E(o.id)+' • '+E(kitchenOrigin(o))+'</b></p>'+
+    '<h3>🔔 '+(isTest?'TESTE DO ALERTA':'NOVO PEDIDO!')+'</h3>'+
+    '<p><b>Pedido #'+E(o.id)+' • Mesa '+E(o.table_number)+'</b></p>'+
     '<p>'+items+'</p>'+
     '<div class="row">'+
       (isTest
@@ -435,14 +402,6 @@ const $=x=>document.getElementById(x);
 const R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 
-function kitchenOrigin(o){
-  if(o && o.account_type==="Avulsa"){
-    const name=String(o.customer_name||"").trim();
-    return "👤 "+(name||("Comanda #"+(o.account_id||"")));
-  }
-  return "Mesa "+String(o&&o.table_number);
-}
-
 async function api(url,opts={}){
   const headers={...(opts.headers||{})};
   if(adminToken)headers["X-Admin-Token"]=adminToken;
@@ -475,28 +434,15 @@ function modal(html){
   $("modal").innerHTML='<div class="modalBox">'+html+'</div>';
   $("modal").classList.remove("hidden");
 }
-function stopPixAutoCheck(){
-  if(pixAutoTimer){clearInterval(pixAutoTimer);pixAutoTimer=null}
-  pixAutoBusy=false;pixAutoPaymentId=null;pixAutoStartedAt=0;
-}
-function closeModal(){
-  stopPixAutoCheck();
-  $("modal").classList.add("hidden");
-}
+function closeModal(){$("modal").classList.add("hidden")}
 
 async function client(){
-  // Ao sair do Admin, interrompe o monitoramento da cozinha para que
-  // rotinas administrativas não tentem atualizar elementos que não existem
-  // na tela do cliente.
-  stopOrderWatch();
-  dismissOrderAlert();
   setMode("client");
   M=await api("/api/menu");
   const mesa=new URLSearchParams(location.search).get("mesa");
 
   $("app").innerHTML=
     '<section class="hero">'+
-      '<img class="heroLogo" src="/logo-gigantes.png" alt="Gigantes do Tênis">'+
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
       (mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':'')+
@@ -512,53 +458,12 @@ async function client(){
   renderMenu();
 }
 
-function realFoodPhoto(p){
-  if(p.image) return p.image;
-  const t=((p.name||"")+" "+(p.description||"")+" "+(p.category||"")).toLowerCase();
-  const U="https://images.unsplash.com/", Q="?auto=format&fit=crop&w=900&h=650&q=82";
-
-  // Porções / pratos / espetos
-  if(/fritas.*bacon|batata.*bacon/.test(t)) return U+"photo-1573080496219-bb080dd4f877"+Q;
-  if(/mandioca|aipim|macaxeira/.test(t)) return U+"photo-1626082927389-6cd097cdc6ec"+Q;
-  if(/calabresa|lingui/.test(t)) return U+"photo-1529692236671-f1f6cf9683ba"+Q;
-  if(/p[aã]o de alho/.test(t)) return U+"photo-1573140247632-f8fd74997d5c"+Q;
-  if(/queijo/.test(t)) return U+"photo-1486297678162-eb2a19b0a32d"+Q;
-  if(/arroz.*vinagrete|farofa|prato.*arroz/.test(t)) return U+"photo-1547592180-85f173990554"+Q;
-  if(/amendoim/.test(t)) return U+"photo-1567892737950-30c4db37cd89"+Q;
-  if(/torcida|salgadinho|chips|lays/.test(t)) return U+"photo-1566478989037-eec170784d0b"+Q;
-  if(/espet|churrasco|carne/.test(t)) return U+"photo-1555939594-58d7cb561ad1"+Q;
-
-  // Drinks
-  if(/caipirinha/.test(t)) return U+"photo-1551024709-8f23befc6f87"+Q;
-  if(/gin.?t[oô]nica|gin tonic/.test(t)) return U+"photo-1551538827-9c037cb4f32a"+Q;
-  if(/aperol/.test(t)) return U+"photo-1551024709-8f23befc6f87"+Q;
-  if(/drink/.test(t)) return U+"photo-1513558161293-cdaf765ed2fd"+Q;
-
-  // Bebidas sem álcool
-  if(/[aá]gua de coco|coco/.test(t)) return U+"photo-1520342868574-5fa3804e551c"+Q;
-  if(/gatorade|isot[oô]nico/.test(t)) return U+"photo-1594736797933-d0501ba2fe65"+Q;
-  if(/yakult|probi[oó]tico/.test(t)) return U+"photo-1621939514649-280e2aa9454f"+Q;
-  if(/[aá]gua com g[aá]s/.test(t)) return U+"photo-1523362628745-0c100150b504"+Q;
-  if(/(^|\s)[aá]gua(\s|$)|mineral/.test(t)) return U+"photo-1548839140-29a749e1cf4d"+Q;
-  if(/suco|detox/.test(t)) return U+"photo-1600271886742-f049cd451bba"+Q;
-  if(/refrigerante|coca|guaran[aá]/.test(t)) return U+"photo-1581636625402-29b2a704ef13"+Q;
-
-  // Lanches / doces / café
-  if(/p[aã]o|baguete|sandu|lanche|torrada/.test(t)) return U+"photo-1528735602780-2552fd46c7af"+Q;
-  if(/bolo|cake/.test(t)) return U+"photo-1578985545062-69928b1d9587"+Q;
-  if(/kit.?kat|chocolate/.test(t)) return U+"photo-1575377427642-087cf684f29d"+Q;
-  if(/caf[eé]|cappuccino/.test(t)) return U+"photo-1495474472287-4d71bcdd2085"+Q;
-  if(/whey|protein/.test(t)) return U+"photo-1593095948071-474c5cc2989d"+Q;
-
-  // Fallback neutro de comida real
-  return U+"photo-1504674900247-0877df9cc836"+Q;
-}
 function renderMenu(){
   const products=M.products.filter(p=>C==="Todos"||p.category===C);
   $("products").innerHTML=products.map(p=>{
     const soldOut=Boolean(p.stock_control)&&Number(p.stock_quantity)<=0;
     return '<article class="card">'+
-      '<div class="pic"><img loading="lazy" src="'+E(realFoodPhoto(p))+'" alt="'+E(p.name)+'"></div>'+
+      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'">':E(p.emoji))+'</div>'+
       '<div class="cardBody">'+
         '<h3>'+E(p.name)+'</h3>'+
         '<p>'+E(p.description)+'</p>'+
@@ -595,13 +500,8 @@ function renderCart(){
 
 function checkout(){
   if(!B.length)return;
-  const qs=new URLSearchParams(location.search);
-  const mesa=qs.get("mesa");
-  const token=qs.get("t");
-  if(!mesa||!token){
-    alert("Para enviar o pedido, abra o cardápio pelo QR Code da sua mesa.");
-    return;
-  }
+  const mesa=new URLSearchParams(location.search).get("mesa")||prompt("Número da mesa:","1");
+  if(!mesa)return;
 
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
   modal(
@@ -622,7 +522,6 @@ async function sendOrder(mesa){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         table:mesa,
-        access_token:new URLSearchParams(location.search).get("t")||"",
         items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
         observation:$("obs").value
       })
@@ -648,13 +547,7 @@ async function myAccount(){
     if(!d.open){modal('<h2>🧾 Minha comanda</h2><div class="empty">Ainda não há pedidos nesta mesa.</div><button class="secondary" onclick="closeModal()">Voltar</button>');return}
     const orders=d.orders.filter(o=>o.status!=="Cancelado");
     modal('<h2>🧾 Minha comanda — Mesa '+E(mesa)+'</h2>'+orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b>'+o.items.map(i=>'<div class="row"><span>'+i.quantity+'x '+E(i.name)+'</span><span>'+R(Number(i.unit_price)*i.quantity)+'</span></div>').join('')+'</div>').join('')+'<h2 style="margin-top:16px">Total: '+R(d.total)+'</h2><div class="notice">O pagamento abaixo é somente por PIX.</div><button class="btn" onclick="askPix()">💠 Pagar com PIX</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
-  }catch(e){
-    if(String(e.message||"").includes("comanda antiga")){
-      modal('<h2>⚠️ Comanda antiga aberta</h2><div class="notice">'+E(e.message)+'</div><button class="secondary" onclick="closeModal()">OK</button>');
-      return;
-    }
-    alert(e.message)
-  }
+  }catch(e){alert(e.message)}
 }
 
 function askPix(){
@@ -678,22 +571,14 @@ async function createPix(){
       '<div class="notice">Confira o valor antes de pagar. Este PIX corresponde à sua comanda atual.</div>'+ 
       '<p>Escaneie o QR Code ou use o Pix Copia e Cola.</p>'+img+
       '<div id="pixCode" class="pixCode">'+E(d.qr_code)+'</div>'+ 
-      '<div id="pixAutoStatus" class="notice" style="margin-top:12px">⏳ Aguardando o pagamento. A confirmação será feita automaticamente.</div>'+
       '<div class="clientActions" style="justify-content:center">'+
         '<button class="btn" onclick="copyPix()">📋 Copiar código PIX</button>'+ 
-        '<button class="secondary" onclick="checkPix('+Number(d.payment_id)+',true)">🔄 Verificar agora</button>'+ 
+        '<button class="secondary" onclick="checkPix('+Number(d.payment_id)+')">🔄 Verificar pagamento</button>'+ 
       '</div>'+ 
-      '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago. A tela verifica automaticamente a cada poucos segundos.</p>'+ 
+      '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago.</p>'+ 
       '<button class="secondary" onclick="closeModal()">Fechar</button>'+ 
     '</div>');
-    startPixAutoCheck(Number(d.payment_id));
-    }catch(e){
-    if(String(e.message||"").includes("Abra o caixa")){
-      modal('<h2>⚠️ Pagamento indisponível</h2><div class="notice">'+E(e.message)+'</div><button class="secondary" onclick="closeModal()">OK</button>');
-      return;
-    }
-    alert(e.message)
-  }
+  }catch(e){alert(e.message)}
 }
 
 async function copyPix(){
@@ -701,47 +586,13 @@ async function copyPix(){
   try{await navigator.clipboard.writeText(code);alert("Código PIX copiado!")}catch(e){alert("Não foi possível copiar automaticamente. Selecione o código e copie manualmente.")}
 }
 
-function setPixAutoStatus(text){
-  const el=$("pixAutoStatus");
-  if(el)el.textContent=text;
-}
-function pixPaidSuccess(){
-  stopPixAutoCheck();
-  modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago e a comanda foi fechada.</p><button class="btn" onclick="closeModal();client()">OK</button></div>');
-}
-async function checkPix(id,manual=false){
-  if(pixAutoBusy)return false;
-  pixAutoBusy=true;
+async function checkPix(id){
   const token=new URLSearchParams(location.search).get("t");
   try{
     const d=await api("/api/client/pix/"+id+"/status?t="+encodeURIComponent(token));
-    if(d.paid){pixPaidSuccess();return true}
-    const status=String(d.status||"pending");
-    setPixAutoStatus("⏳ Aguardando pagamento. Status: "+status+". Verificando automaticamente...");
-    if(manual)alert("Pagamento ainda não confirmado. Status: "+status);
-    return false;
-  }catch(e){
-    setPixAutoStatus("⚠️ Não foi possível verificar agora. Tentaremos novamente automaticamente.");
-    if(manual)alert(e.message);
-    return false;
-  }finally{pixAutoBusy=false}
-}
-function startPixAutoCheck(id){
-  stopPixAutoCheck();
-  pixAutoPaymentId=Number(id);
-  pixAutoStartedAt=Date.now();
-  // Primeira consulta após poucos segundos, depois a cada 4 s.
-  setTimeout(()=>{if(pixAutoPaymentId===Number(id))checkPix(id,false)},2500);
-  pixAutoTimer=setInterval(()=>{
-    if(pixAutoPaymentId!==Number(id)){stopPixAutoCheck();return}
-    // Depois de 30 minutos o QR já está no limite de validade. Mantém o botão
-    // manual disponível, mas interrompe consultas automáticas desnecessárias.
-    if(Date.now()-pixAutoStartedAt>30*60*1000){
-      setPixAutoStatus("⏱️ A verificação automática foi encerrada. Gere um novo PIX se este tiver expirado.");
-      stopPixAutoCheck();return;
-    }
-    checkPix(id,false);
-  },4000);
+    if(d.paid)modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago.</p><button class="btn" onclick="closeModal()">OK</button></div>');
+    else alert("Pagamento ainda não confirmado. Status: "+d.status);
+  }catch(e){alert(e.message)}
 }
 
 function adminLogin(){
@@ -827,141 +678,93 @@ async function refreshDashboardStats(){
 }
 
 
-let accountSearchTerm="";
 async function accounts(){
   try{
     const a=await api("/api/accounts");
     const open=a.filter(x=>x.status==="Aberta");
-    const q=String(accountSearchTerm||"").trim().toLowerCase();
-    const visible=!q?open:open.filter(x=>{
-      const label=x.account_type==="Avulsa"?(x.customer_name||""):("mesa "+x.table_number);
-      return label.toLowerCase().includes(q);
-    });
-    const adminContent=$("adminContent"); if(!adminContent)return;
-    adminContent.innerHTML=
-      '<div class="panel">'+
-        '<div class="row"><h2>Comandas abertas</h2><div><span class="badgeOpen">'+open.length+' abertas</span> <button class="btn" onclick="newLooseAccount()">+ Comanda avulsa</button></div></div>'+
-        '<div class="notice">Use <b>Comanda avulsa</b> para clientes sem mesa. Pode identificar pelo nome, quadra ou outro nome fácil.</div>'+
-        '<div class="accountSearch"><input type="search" placeholder="🔎 Buscar mesa ou comanda..." value="'+E(accountSearchTerm)+'" oninput="accountSearchTerm=this.value;accounts()">'+(accountSearchTerm?'<button class="secondary" onclick="accountSearchTerm=\'\';accounts()">Limpar</button>':'')+'</div>'+
-        (visible.length?'<div class="accountGrid">'+visible.map(x=>{
-          const av=x.account_type==="Avulsa";
-          return '<div class="accountCard open"><span class="badgeOpen">ABERTA</span>'+
-            '<h3>'+(av?'👤 '+E(x.customer_name||('Comanda #'+x.id)):'🪑 Mesa '+x.table_number)+'</h3>'+
-            '<div class="accountType">'+(av?'COMANDA AVULSA':'MESA')+'</div>'+
-            '<div>'+x.order_count+' pedido(s)</div><div class="accountTotal">'+R(x.total)+'</div>'+
-            '<button class="btn" onclick="viewAccountById('+x.id+')">Ver comanda</button></div>';
-        }).join('')+'</div>':'<div class="empty">Nenhuma comanda encontrada.</div>')+
+    $("adminContent").innerHTML=
+      '<div class="panel"><div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
+      (open.length?'<div class="accountGrid">'+open.map(x=>
+        '<div class="accountCard open">'+
+          '<span class="badgeOpen">ABERTA</span>'+
+          '<h3>Mesa '+x.table_number+'</h3>'+
+          '<div>'+x.order_count+' pedido(s)</div>'+
+          '<div class="accountTotal">'+R(x.total)+'</div>'+
+          '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
+        '</div>'
+      ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
       '</div>';
     await refreshDashboardStats();
   }catch(e){alert(e.message)}
 }
 
-function newLooseAccount(){
-  modal('<h2>👤 Nova comanda avulsa</h2><p>Use quando o cliente estiver sem mesa.</p><div class="field"><label>Nome / identificação</label><input id="looseAccountName" placeholder="Ex.: Sandra, João, Quadra 2"></div><button class="btn" onclick="createLooseAccount()">Criar comanda</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
-  setTimeout(()=>{const x=$("looseAccountName");if(x)x.focus()},50);
-}
-async function createLooseAccount(){
-  const name=String($("looseAccountName")?.value||"").trim();
-  if(!name)return alert("Digite um nome ou identificação.");
-  try{const r=await api("/api/accounts/avulsa",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customer_name:name})});closeModal();viewAccountById(r.account.id)}catch(e){alert(e.message)}
-}
-
 async function viewAccount(tableNumber){
-  try{const d=await api("/api/accounts/table/"+tableNumber);if(!d.open){alert("Esta mesa não possui comanda aberta.");accounts();return}viewAccountById(d.account.id)}catch(e){alert(e.message)}
-}
-async function viewAccountById(accountId){
   try{
-    const data=await api("/api/accounts/"+accountId);if(!data.open){alert("Esta comanda não está aberta.");accounts();return}
-    const account=data.account,av=account.account_type==="Avulsa";
-    const title=av?('👤 Comanda — '+E(account.customer_name||('#'+account.id))):('🪑 Comanda — Mesa '+account.table_number);
-    modal(titleAccountHtml(title,account,data,av));
-  }catch(e){alert(e.message)}
-}
-function titleAccountHtml(title,account,data,av){
-  return '<h2>'+title+'</h2><div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
-    (data.orders.length?data.orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b> • '+new Date(o.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+(o.status==="Cancelado"?'<div style="color:#fca5a5">CANCELADO</div>':'')+'<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+(o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+'<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div></div>').join(''):'<div class="empty">Nenhum pedido lançado ainda.</div>')+
-    '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
-    '<button class="btn" onclick="addLooseOrderForm('+account.id+')">+ Adicionar pedido</button> '+
-    (data.total>0?'<button class="btn" onclick="closeAccountForm('+account.id+','+account.table_number+','+data.total+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">Fechar conta</button> ':'')+
-    '<button class="danger" onclick="cancelAccount('+account.id+','+account.table_number+',\''+(av?E(account.customer_name||'Avulsa'):'')+'\')">🗑️ Cancelar comanda</button> <button class="secondary" onclick="closeModal();accounts()">Voltar</button>';
-}
-let looseOrderItems=[];
-async function addLooseOrderForm(accountId){
-  try{const m=await api("/api/menu");looseOrderItems=[];modal('<h2>Adicionar pedido</h2><div class="field"><label>Produto</label><select id="looseProduct">'+m.products.map(p=>'<option value="'+p.id+'">'+E(p.name)+' — '+R(p.price)+'</option>').join('')+'</select></div><div class="field"><label>Quantidade</label><input id="looseQty" type="number" min="1" value="1"></div><button class="btn" onclick="addLooseItem('+accountId+')">Adicionar item</button><div id="looseItemsBox"></div><div class="field"><label>Observação</label><textarea id="looseObs" placeholder="Opcional"></textarea></div><button class="btn" onclick="saveLooseOrder('+accountId+')">Enviar para cozinha</button> <button class="secondary" onclick="viewAccountById('+accountId+')">Voltar</button>')}catch(e){alert(e.message)}
-}
-function addLooseItem(accountId){const id=Number($("looseProduct").value),q=Math.max(1,Number($("looseQty").value||1));const name=$("looseProduct").selectedOptions[0].textContent;const x=looseOrderItems.find(i=>i.product_id===id);x?x.quantity+=q:looseOrderItems.push({product_id:id,quantity:q,name});renderLooseItems()}
-function renderLooseItems(){const b=$("looseItemsBox");if(b)b.innerHTML=looseOrderItems.length?'<div class="notice">'+looseOrderItems.map(i=>i.quantity+'x '+E(i.name)).join('<br>')+'</div>':'<div class="empty">Nenhum item adicionado.</div>'}
-async function saveLooseOrder(accountId){if(!looseOrderItems.length)return alert("Adicione pelo menos um item.");try{await api("/api/accounts/"+accountId+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:looseOrderItems.map(({product_id,quantity})=>({product_id,quantity})),observation:$("looseObs")?.value||""})});alert("Pedido enviado para a cozinha.");viewAccountById(accountId)}catch(e){alert(e.message)}}
+    const data=await api("/api/accounts/table/"+tableNumber);
+    if(!data.open){alert("Esta mesa não possui comanda aberta.");accounts();return}
 
-
-async function cancelAccount(accountId,tableNumber,customerName=""){
-  if(!confirm(
-    "Cancelar a comanda "+(customerName?("de "+customerName):("da Mesa "+tableNumber))+"?\n\n"+
-    "Esta ação NÃO registra pagamento. Os pedidos serão cancelados e, se houver estoque controlado, as quantidades serão devolvidas. PIX pendente será invalidado; PIX já pago continuará protegido."
-  ))return;
-  try{
-    const r=await api("/api/accounts/"+accountId+"/cancel",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({})
-    });
+    const account=data.account;
     modal(
-      '<div style="text-align:center">'+
-        '<div style="font-size:56px">🗑️</div>'+
-        '<h2>Comanda cancelada</h2>'+
-        '<p>'+(customerName?('Comanda de '+E(customerName)+' encerrada.'):('Mesa '+r.table_number+' liberada.'))+'</p>'+
-        '<p><b>'+r.cancelled_orders+' pedido(s)</b> cancelado(s).</p>'+
-        '<p style="color:#aaa">Nenhum valor foi lançado como pagamento.</p>'+
-        '<button class="btn" onclick="closeModal();accounts()">OK</button>'+
-      '</div>'
+      '<h2>🪑 Comanda — Mesa '+tableNumber+'</h2>'+
+      '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
+      data.orders.map(o=>
+        '<div class="billOrder">'+
+          '<b>Pedido #'+o.id+'</b> • '+new Date(o.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+
+          (o.status==="Cancelado"?'<div style="color:#fca5a5">CANCELADO</div>':'')+
+          '<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+
+          (o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+
+          '<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div>'+
+        '</div>'
+      ).join("")+
+      '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
+      '<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> '+
+      '<button class="secondary" onclick="closeModal()">Voltar</button>'
     );
   }catch(e){alert(e.message)}
 }
 
-let selectedPayment="PIX";
-async function closeAccountForm(accountId,tableNumber,total,customerName=""){
-  try{
-    const cashState=await api("/api/cash");
-    if(!cashState.session){
-      alert("Abra o caixa antes de receber ou fechar uma conta.");
-      return;
-    }
-  }catch(e){alert(e.message);return}
-  selectedPayment="PIX";
-  const origin=customerName?customerName:("Mesa "+tableNumber);
+let selectedPayment="";
+function closeAccountForm(accountId,tableNumber,total){
+  selectedPayment="";
   modal(
-    '<h2>Fechar conta — '+E(origin)+'</h2>'+
+    '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
-    '<p>Forma de pagamento:</p>'+
+    '<p>Escolha a forma de pagamento:</p>'+
     '<div class="paymentGrid">'+
-      '<button id="payPIX" class="selected" type="button">PIX</button>'+
+      '<button id="payPIX" onclick="selectPayment(\'PIX\')">PIX</button>'+
+      '<button id="payDinheiro" onclick="selectPayment(\'Dinheiro\')">Dinheiro</button>'+
+      '<button id="payCartao" onclick="selectPayment(\'Cartão\')">Cartão</button>'+
     '</div>'+
-    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+',\''+E(customerName||"")+'\')">Confirmar pagamento</button> '+
+    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">Confirmar pagamento</button> '+
     '<button class="secondary" onclick="viewAccount('+tableNumber+')">Voltar</button>'
   );
 }
 
 function selectPayment(method){
-  selectedPayment="PIX";
+  selectedPayment=method;
+  ["PIX","Dinheiro","Cartão"].forEach(x=>{
+    const id=x==="Cartão"?"payCartao":"pay"+x;
+    const el=$(id);
+    if(el)el.classList.toggle("selected",x===method);
+  });
 }
 
-async function confirmCloseAccount(accountId,tableNumber,customerName=""){
-  selectedPayment="PIX";
-  const origin=customerName?customerName:("Mesa "+tableNumber);
-  if(!confirm("Confirmar fechamento da conta "+origin+" em PIX?"))return;
+async function confirmCloseAccount(accountId,tableNumber){
+  if(!selectedPayment){alert("Escolha a forma de pagamento.");return}
+  if(!confirm("Confirmar fechamento da conta da Mesa "+tableNumber+" em "+selectedPayment+"?"))return;
 
   try{
     const r=await api("/api/accounts/"+accountId+"/close",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({payment_method:"PIX"})
+      body:JSON.stringify({payment_method:selectedPayment})
     });
     modal(
       '<div style="text-align:center">'+
         '<div style="font-size:56px">✅</div>'+
         '<h2>Conta fechada!</h2>'+
-        '<p>'+E(origin)+'</p>'+
-        '<p><b>'+R(r.total)+'</b> • PIX</p>'+
+        '<p>Mesa '+r.table_number+'</p>'+
+        '<p><b>'+R(r.total)+'</b> • '+E(r.payment_method)+'</p>'+
         '<button class="btn" onclick="closeModal();dashboard()">OK</button>'+
       '</div>'
     );
@@ -1000,13 +803,10 @@ async function orders(){
       }[o.status]||"";
 
       const ageInfo=kitchenAgeInfo(o.created_at);
-      const pixClosed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
-      const pixVerified = pixClosed && Boolean(o.pix_verified);
-      const paymentBadge = pixVerified
-        ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • MERCADO PAGO</span></div>'
-        : (pixClosed
-          ? '<div><span class="paymentConfirmedBadge">✅ CONTA FECHADA • PIX MANUAL</span></div>'
-          : '');
+      const pixConfirmed = o.account_status==="Fechada" && o.account_payment_method==="PIX";
+      const paymentBadge = pixConfirmed
+        ? '<div><span class="paymentConfirmedBadge">💎 PIX CONFIRMADO • COMANDA PAGA</span></div>'
+        : '';
 
       let actions='';
       if(o.status==="Recebido"){
@@ -1022,7 +822,7 @@ async function orders(){
       }
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
-        '<h3>#'+o.id+' — '+E(kitchenOrigin(o))+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
+        '<h3>#'+o.id+' — Mesa '+o.table_number+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
         '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+' <span class="kitchenAge '+ageInfo.cls+'">'+ageInfo.label+'</span></p>'+
         o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
@@ -1033,9 +833,7 @@ async function orders(){
       '</div>';
     };
 
-    const adminContent=$("adminContent");
-    if(!adminContent)return;
-    adminContent.innerHTML=
+    $("adminContent").innerHTML=
       '<div class="panel" id="ordersPanelMarker">'+
         '<div class="row"><div><h2 style="margin-bottom:4px">🍳 Pedidos / Cozinha</h2><div style="color:#aaa">O alerta continua tocando até o pedido ser aceito.</div></div>'+
         '<div class="kitchenActions"><button class="secondary" onclick="testOrderAlert()">🔔 Testar alerta</button><button class="secondary" onclick="cleanupOldOrders()">🧹 LIMPAR PEDIDOS ANTIGOS (48H+)</button></div></div>'+
@@ -1077,64 +875,32 @@ async function cleanupOldOrders(){
 async function products(){
   try{
     const a=await api("/api/admin/products");
-    const q=String(adminProductSearchTerm||"").trim().toLowerCase();
-    const visible=!q ? a : a.filter(p=>
-      String(p.name||"").toLowerCase().includes(q) ||
-      String(p.category||"").toLowerCase().includes(q) ||
-      String(p.description||"").toLowerCase().includes(q)
-    );
-
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
-        '<div class="notice">📷 Para trocar uma foto: clique em <b>Editar</b> no produto e escolha a imagem diretamente do celular ou computador.</div>'+
-        '<div class="adminProductSearch">'+
-          '<input id="adminProductSearch" type="search" placeholder="🔎 Buscar produto por nome, categoria ou descrição..." value="'+E(adminProductSearchTerm)+'" oninput="filterAdminProducts(this.value)">'+
-          (adminProductSearchTerm?'<button class="secondary" onclick="clearAdminProductSearch()">Limpar</button>':'')+
-        '</div>'+
-        '<div id="adminProductList">'+
-          (visible.length?visible.map(p=>{
-            const price=Number(p.price||0);
-            const cost=Number(p.cost_price||0);
-            const profit=price-cost;
-            const margin=price>0?(profit/price)*100:0;
-            return '<div class="productRow">'+
-              '<div>'+
-                '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
-                '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
-                '<div style="font-size:13px;margin-top:4px">'+
-                  '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
-                  '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
-                  '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
-                '</div>'+
+        a.map(p=>{
+          const price=Number(p.price||0);
+          const cost=Number(p.cost_price||0);
+          const profit=price-cost;
+          const margin=price>0?(profit/price)*100:0;
+          return '<div class="productRow">'+
+            '<div>'+
+              '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
+              '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
+              '<div style="font-size:13px;margin-top:4px">'+
+                '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
+                '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
+                '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
               '</div>'+
-              '<div class="productActions">'+
-                '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
-                '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
-              '</div>'+
-            '</div>';
-          }).join(""):'<div class="empty">Nenhum produto encontrado para esta busca.</div>')+
-        '</div>'+
+            '</div>'+
+            '<div class="productActions">'+
+              '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
+              '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
+            '</div>'+
+          '</div>';
+        }).join("")+
       '</div>';
-
-    requestAnimationFrame(()=>{
-      const input=$("adminProductSearch");
-      if(input && adminProductSearchTerm){
-        input.focus();
-        input.setSelectionRange(input.value.length,input.value.length);
-      }
-    });
   }catch(e){alert(e.message)}
-}
-
-function filterAdminProducts(value){
-  adminProductSearchTerm=String(value||"");
-  products();
-}
-
-function clearAdminProductSearch(){
-  adminProductSearchTerm="";
-  products();
 }
 
 async function productForm(id){
@@ -1155,79 +921,13 @@ async function productForm(id){
       '</select></div>'+
       '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
       '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
-      '<div class="field">'+
-        '<label>📷 Foto do produto</label>'+
-        '<img id="productPhotoPreview" class="productPhotoAdmin" src="'+E(realFoodPhoto(p))+'" alt="Prévia da foto">'+
-        '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
-        '<div class="photoPicker">'+
-          '<input id="productPhotoFile" type="file" accept="image/jpeg,image/png,image/webp,image/*" onchange="chooseProductPhoto(this)">'+
-          '<button type="button" class="secondary" onclick="removeProductPhoto()">Remover foto personalizada</button>'+
-        '</div>'+
-        '<div class="photoHelp">Escolha uma foto do celular ou computador. O sistema reduz a imagem automaticamente para ficar leve. JPG, PNG ou WEBP são os formatos mais seguros.</div>'+
-      '</div>'+
+      '<div class="field"><label>URL da foto (opcional)</label><input id="pi" value="'+E(p.image||"")+'"></div>'+
       '<div class="field"><label><input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
       '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
   }catch(e){alert(e.message)}
-}
-
-
-function chooseProductPhoto(input){
-  const file=input.files&&input.files[0];
-  if(!file)return;
-
-  if(!String(file.type||"").startsWith("image/")){
-    alert("Escolha um arquivo de imagem.");
-    input.value="";
-    return;
-  }
-
-  const reader=new FileReader();
-  reader.onload=()=>{
-    const img=new Image();
-    img.onload=()=>{
-      try{
-        const maxW=900,maxH=700;
-        let w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
-        const scale=Math.min(1,maxW/w,maxH/h);
-        w=Math.max(1,Math.round(w*scale));
-        h=Math.max(1,Math.round(h*scale));
-
-        const canvas=document.createElement("canvas");
-        canvas.width=w;canvas.height=h;
-        const ctx=canvas.getContext("2d");
-        ctx.drawImage(img,0,0,w,h);
-
-        // JPEG reduz bastante o tamanho e mantém boa qualidade para o cardápio.
-        const data=canvas.toDataURL("image/jpeg",0.78);
-        $("pi").value=data;
-        $("productPhotoPreview").style.display="block";
-        $("productPhotoPreview").src=data;
-      }catch(e){
-        alert("Não foi possível preparar esta foto. Tente uma imagem JPG ou PNG.");
-      }
-    };
-    img.onerror=()=>{
-      alert("Não foi possível abrir esta foto. Tente uma imagem JPG ou PNG.");
-      input.value="";
-    };
-    img.src=reader.result;
-  };
-  reader.onerror=()=>alert("Não foi possível ler a foto.");
-  reader.readAsDataURL(file);
-}
-
-function removeProductPhoto(){
-  $("pi").value="";
-  const preview=$("productPhotoPreview");
-  if(preview){
-    preview.removeAttribute("src");
-    preview.style.display="none";
-  }
-  const f=$("productPhotoFile");
-  if(f)f.value="";
 }
 
 async function saveProduct(id){
@@ -1261,55 +961,51 @@ async function deleteProduct(id,name){
   }catch(e){alert(e.message)}
 }
 
-let adminProductSearchTerm="";
-let stockMode="all";
+let stockFilter="all";
 
-async function stock(mode){
+async function stock(filter){
   try{
-    if(mode)stockMode=mode;
+    if(typeof filter==="string")stockFilter=filter;
+    else if(typeof filter==="boolean")stockFilter=filter?"low":"all";
     const a=await api("/api/stock");
     const controlled=a.filter(p=>p.stock_control);
     const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
-    const noCost=p=>p.stock_control&&Number(p.cost_price||0)<=0;
+    const hasCost=p=>Number(p.cost_price||0)>0;
     const low=controlled.filter(isLow);
-    const missingCost=controlled.filter(noCost);
-    const stockValue=controlled.reduce((sum,p)=>sum+Number(p.stock_quantity||0)*Number(p.cost_price||0),0);
-    const visible=stockMode==="low"?a.filter(isLow):(stockMode==="nocost"?a.filter(noCost):a);
-    const modeText=stockMode==="low"?'Mostrando somente produtos controlados que atingiram o limite de estoque baixo.':(stockMode==="nocost"?'Mostrando produtos controlados sem custo cadastrado. Cadastre o custo para que lucro e margem fiquem reais.':'A baixa acontece automaticamente quando o cliente faz o pedido. Se o pedido for cancelado, a quantidade volta ao estoque. O custo informado aqui alimenta os relatórios de lucro das próximas vendas.');
+    const noCost=a.filter(p=>!hasCost(p));
+    const visible=stockFilter==="low"?a.filter(isLow):stockFilter==="nocost"?noCost:a;
+    const inventoryValue=controlled.reduce((sum,p)=>sum+(Number(p.stock_quantity||0)*Number(p.cost_price||0)),0);
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📦 Estoque & Custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) controlado(s) • '+low.length+' com estoque baixo • '+missingCost.length+' sem custo</div></div></div>'+
-        '<div class="reportGrid" style="margin-top:12px">'+
-          '<div class="reportBox"><small>Produtos controlados</small><strong>'+controlled.length+'</strong></div>'+
-          '<div class="reportBox"><small>⚠️ Estoque baixo</small><strong>'+low.length+'</strong></div>'+
-          '<div class="reportBox"><small>💰 Sem custo</small><strong>'+missingCost.length+'</strong></div>'+
-          '<div class="reportBox"><small>Valor do estoque a custo</small><strong>'+R(stockValue)+'</strong></div>'+
-        '</div>'+
+        '<div class="row"><div><h2>📦 Estoque e custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição • '+noCost.length+' sem custo cadastrado</div></div><div style="text-align:right"><div style="color:#aaa;font-size:13px">Valor do estoque controlado</div><b style="color:#ffd34d;font-size:22px">'+R(inventoryValue)+'</b></div></div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0" class="noPrint">'+
-          '<button class="'+(stockMode==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
-          '<button class="'+(stockMode==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+missingCost.length+')</button>'+
-          '<button class="'+(stockMode==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+
+          '<button class="'+(stockFilter==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
+          '<button class="'+(stockFilter==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+noCost.length+')</button>'+
+          '<button class="'+(stockFilter==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+
           '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+
         '</div>'+
-        '<div class="notice">'+modeText+'</div>'+
+        '<div class="notice">Cadastre o custo unitário para acompanhar margem e valor do estoque. O preço de venda continua vindo do Cardápio e não é alterado nesta tela.</div>'+
         (visible.length?visible.map(p=>{
           const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=isLow(p);
-          const cost=Number(p.cost_price||0), price=Number(p.price||0), value=q*cost;
-          const margin=price>0?((price-cost)/price)*100:0;
-          return '<div class="productRow">'+
-            '<div><b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
-              '<div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div>'+
-              '<div style="color:'+(cost>0?'#bbb':'#ffb74d')+';font-size:13px;margin-top:3px">Custo: <b>'+R(cost)+'</b> • Venda: '+R(price)+' • Margem: '+(cost>0?margin.toFixed(1)+'%':'—')+(p.stock_control?' • Valor em estoque: '+R(value):'')+'</div>'+
+          const price=Number(p.price||0), cost=Number(p.cost_price||0);
+          const margin=price>0&&cost>0?((price-cost)/price*100):null;
+          const value=p.stock_control?q*cost:0;
+          return '<div class="productRow" style="gap:16px">'+
+            '<div style="min-width:240px;flex:1"><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(105px,1fr));gap:8px;flex:2;min-width:520px">'+
+              '<div><small style="color:#999">Estoque atual</small><div style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</div></div>'+
+              '<div><small style="color:#999">Custo unitário</small><div style="font-weight:900">'+(cost>0?R(cost):'<span style="color:#ffb74d">Não informado</span>')+'</div></div>'+
+              '<div><small style="color:#999">Preço / Margem</small><div style="font-weight:900">'+R(price)+(margin!==null?' • '+margin.toFixed(1).replace('.',',')+'%':'')+'</div></div>'+
+              '<div><small style="color:#999">Valor em estoque</small><div style="font-weight:900">'+(p.stock_control&&cost>0?R(value):'—')+'</div></div>'+
             '</div>'+
-            '<div class="productActions" style="align-items:center">'+
-              '<span style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</span>'+
-              '<button class="secondary" onclick="stockForm('+p.id+')">Ajustar / Custo</button>'+
-            '</div></div>';
-        }).join(''):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
+            '<div class="productActions" style="align-items:center"><button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button></div>'+
+          '</div>';
+        }).join(""):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
       '</div>';
     requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
   }catch(e){alert(e.message)}
 }
+
 
 async function stockReplenishmentList(){
   try{
@@ -1325,16 +1021,23 @@ async function stockReplenishmentList(){
         '<div class="reportSection">'+
           (!low.length
             ? '<div class="notice">Nenhum produto precisa de reposição no momento. ✅</div>'
-            : '<div style="overflow:auto"><table class="reportTable" style="width:100%;border-collapse:collapse;min-width:760px">'+
-                '<thead><tr><th>Produto</th><th>Categoria</th><th style="text-align:right">Estoque atual</th><th style="text-align:right">Limite</th><th style="text-align:right">Custo unit.</th><th style="text-align:right">Valor estoque</th></tr></thead><tbody>'+
-                low.map(p=>{
-                  const q=Number(p.stock_quantity||0),cost=Number(p.cost_price||0);
-                  return '<tr><td><b>'+E(p.emoji||"📦")+' '+E(p.name)+'</b></td><td>'+E(p.category||"—")+'</td><td style="text-align:right"><b>'+q+' un.</b></td><td style="text-align:right">'+Number(p.stock_low_threshold ?? 5)+' un.</td><td style="text-align:right">'+R(cost)+'</td><td style="text-align:right"><b>'+R(q*cost)+'</b></td></tr>';
-                }).join('')+
+            : '<div style="overflow:auto"><table class="reportTable" style="width:100%;border-collapse:collapse;min-width:560px">'+
+                '<thead><tr><th>Produto</th><th>Categoria</th><th style="text-align:right">Estoque atual</th><th style="text-align:right">Limite de alerta</th></tr></thead><tbody>'+
+                low.map(p=>
+                  '<tr>'+
+                    '<td><b>'+E(p.emoji||"📦")+' '+E(p.name)+'</b></td>'+
+                    '<td>'+E(p.category||"—")+'</td>'+
+                    '<td style="text-align:right"><b>'+Number(p.stock_quantity||0)+' un.</b></td>'+
+                    '<td style="text-align:right">'+Number(p.stock_low_threshold ?? 5)+' un.</td>'+
+                  '</tr>'
+                ).join("")+
                 '</tbody></table></div>')+
         '</div>'+
       '</div>';
-    requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
+    requestAnimationFrame(()=>{
+      const el=$("adminContent");
+      if(el)el.scrollIntoView({behavior:"auto",block:"start"});
+    });
   }catch(e){alert(e.message)}
 }
 
@@ -1343,26 +1046,22 @@ async function stockHistory(){
     const a=await api("/api/stock/history");
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📋 Histórico de estoque e custos</h2><div style="color:#aaa">Últimas '+a.length+' movimentação(ões)</div></div><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
+        '<div class="row"><div><h2>📋 Histórico de estoque</h2><div style="color:#aaa">Últimas '+a.length+' movimentação(ões)</div></div><button class="secondary" onclick="stock()">📦 Voltar ao estoque</button></div>'+
         (!a.length?'<div class="notice">Nenhuma movimentação de estoque registrada.</div>':
-        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;min-width:920px">'+
-          '<thead><tr><th style="text-align:left;padding:10px">Data / hora</th><th style="text-align:left;padding:10px">Produto</th><th style="text-align:left;padding:10px">Movimento</th><th style="text-align:right;padding:10px">Qtd.</th><th style="text-align:center;padding:10px">Estoque</th><th style="text-align:center;padding:10px">Custo</th><th style="text-align:left;padding:10px">Observação</th></tr></thead><tbody>'+
+        '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">'+
+          '<thead><tr><th style="text-align:left;padding:10px">Data / hora</th><th style="text-align:left;padding:10px">Produto</th><th style="text-align:left;padding:10px">Movimento</th><th style="text-align:right;padding:10px">Qtd.</th><th style="text-align:center;padding:10px">Estoque</th><th style="text-align:left;padding:10px">Observação</th></tr></thead><tbody>'+
           a.map(m=>{
-            const d=new Date(m.created_at),dt=isNaN(d)?'':d.toLocaleString('pt-BR');
+            const d=new Date(m.created_at);
+            const dt=isNaN(d)?'':d.toLocaleString('pt-BR');
             const type=String(m.movement_type||'');
             const plus=(type==='Entrada'||type==='Cancelamento');
             const sign=plus?'+':(type==='Venda'||type==='Reativação'?'-':'');
-            const pc=m.previous_cost===null||m.previous_cost===undefined?null:Number(m.previous_cost);
-            const nc=m.new_cost===null||m.new_cost===undefined?null:Number(m.new_cost);
-            const ec=m.entry_unit_cost===null||m.entry_unit_cost===undefined?null:Number(m.entry_unit_cost);
-            const costTxt=(pc===null&&nc===null)?'—':R(pc||0)+' → <b>'+R(nc||0)+'</b>'+(ec!==null?'<div style="color:#aaa;font-size:12px">Compra: '+R(ec)+'</div>':'');
             return '<tr style="border-top:1px solid #333">'+
               '<td style="padding:10px;white-space:nowrap">'+E(dt)+'</td>'+
               '<td style="padding:10px"><b>'+E(m.emoji||'📦')+' '+E(m.product_name||'Produto removido')+'</b></td>'+
               '<td style="padding:10px"><b style="color:#ffd34d">'+E(type)+'</b></td>'+
               '<td style="padding:10px;text-align:right;font-weight:900">'+sign+Number(m.quantity||0)+'</td>'+
               '<td style="padding:10px;text-align:center;white-space:nowrap">'+Number(m.previous_quantity||0)+' → <b>'+Number(m.new_quantity||0)+'</b></td>'+
-              '<td style="padding:10px;text-align:center;white-space:nowrap">'+costTxt+'</td>'+
               '<td style="padding:10px;color:#bbb">'+E(m.note||'—')+'</td>'+
             '</tr>';
           }).join('')+'</tbody></table></div>')+
@@ -1374,22 +1073,19 @@ async function stockForm(id){
   try{
     const a=await api("/api/stock"),p=a.find(x=>x.id===id);
     if(!p)return;
-    const cost=Number(p.cost_price||0),price=Number(p.price||0),q=Number(p.stock_quantity||0);
-    const margin=price>0?((price-cost)/price)*100:0;
-    modal('<h2>📦 Estoque & custo — '+E(p.name)+'</h2>'+
-      '<div class="notice">Preço de venda: <b>'+R(price)+'</b> • Custo atual: <b>'+R(cost)+'</b> • Margem bruta estimada: <b>'+(cost>0?margin.toFixed(1)+'%':'custo não informado')+'</b></div>'+
+    modal('<h2>📦 Estoque — '+E(p.name)+'</h2>'+
       '<div class="field"><label><input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
-      '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+q+'"></div>'+
-      '<div class="field"><label>💰 Custo unitário atual</label><input id="stcost" type="number" min="0" step=".01" value="'+cost+'"></div>'+
+      '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '<div class="field"><label>💰 Custo unitário (R$)</label><input id="stcost" type="number" min="0" step="0.01" value="'+Number(p.cost_price||0).toFixed(2)+'"></div>'+
+      '<div class="notice">Preço de venda atual: <b>'+R(Number(p.price||0))+'</b>. O custo é usado nos relatórios de lucro, margem e valor do estoque.</div>'+
       '<div class="field"><label>⚠️ Avisar estoque baixo quando restarem</label><input id="stl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
-      '<div class="notice">O custo atual é usado nos próximos pedidos. Pedidos antigos preservam o custo que existia no momento da venda.</div>'+
-      '<div class="notice">Use <b>Salvar ajuste manual</b> para corrigir quantidade/custo. Para compras e reposições, prefira a entrada abaixo.</div>'+
+      '<div class="notice">Este limite vale somente para este produto. Ex.: 5 significa que o aviso aparece com 5 unidades ou menos.</div>'+
+      '<div class="notice">Use <b>Salvar estoque</b> para correções manuais. Para reposição de mercadoria, prefira a entrada abaixo.</div>'+
       '<hr style="border:0;border-top:1px solid #333;margin:18px 0">'+
       '<h3>➕ Entrada de estoque</h3>'+
       '<div class="field"><label>Quantidade que está entrando</label><input id="ste" type="number" min="1" step="1" placeholder="Ex.: 20"></div>'+
-      '<div class="field"><label>💰 Custo unitário desta compra (opcional)</label><input id="stecost" type="number" min="0" step=".01" placeholder="Ex.: 3,50"></div>'+
-      '<div class="field"><label>Observação (opcional)</label><input id="sten" placeholder="Ex.: Compra / fornecedor / nota"></div>'+
-      '<div class="notice">Se informar o custo da compra, o sistema recalcula automaticamente o <b>custo médio ponderado</b>. Estoque atual: <b>'+q+' un.</b> • Valor atual a custo: <b>'+R(q*cost)+'</b>.</div>'+
+      '<div class="field"><label>Observação (opcional)</label><input id="sten" placeholder="Ex.: Compra / reposição"></div>'+
+      '<div class="notice">Estoque atual: <b>'+Number(p.stock_quantity||0)+'</b>. A entrada será somada automaticamente.</div>'+
       '<button class="btn" onclick="stockEntry('+id+')">➕ Registrar entrada</button> '+
       '<button class="secondary" onclick="saveStock('+id+')">Salvar ajuste manual</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>');
@@ -1398,25 +1094,29 @@ async function stockForm(id){
 
 async function saveStock(id){
   try{
-    const cost=Math.max(0,Number($("stcost").value)||0);
-    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0)),stock_low_threshold:Math.max(0,Math.floor(Number($("stl").value)||0)),cost_price:cost})});
+    await api("/api/stock/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({stock_control:$("stc").checked,quantity:Math.max(0,Math.floor(Number($("stq").value)||0)),stock_low_threshold:Math.max(0,Math.floor(Number($("stl").value)||0)),cost_price:Math.max(0,Number($("stcost").value)||0)})});
     closeModal();stock();
   }catch(e){alert(e.message)}
 }
+
 
 async function stockEntry(id){
   try{
     const quantity=Math.floor(Number($("ste").value)||0);
     if(quantity<=0){alert("Informe uma quantidade maior que zero.");return}
     const note=$("sten").value.trim();
-    const rawCost=$("stecost").value.trim().replace(",",".");
-    const unitCost=rawCost===""?null:Number(rawCost);
-    if(unitCost!==null&&(!Number.isFinite(unitCost)||unitCost<0)){alert("Informe um custo unitário válido.");return}
-    const costMsg=unitCost===null?'':(' com custo unitário de '+R(unitCost));
-    if(!confirm("Registrar entrada de "+quantity+" unidade(s)"+costMsg+"?"))return;
-    const r=await api("/api/stock/"+id+"/entry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({quantity,note,unit_cost:unitCost})});
-    alert("Entrada registrada! Estoque: "+r.previous_quantity+" → "+r.stock_quantity+" un.\nCusto médio atual: "+R(r.cost_price||0));
-    closeModal();stock();
+
+    if(!confirm("Registrar entrada de "+quantity+" unidade(s) no estoque?"))return;
+
+    const r=await api("/api/stock/"+id+"/entry",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({quantity,note})
+    });
+
+    alert("Entrada registrada! Estoque: "+r.previous_quantity+" → "+r.stock_quantity+" un.");
+    closeModal();
+    stock();
   }catch(e){alert(e.message)}
 }
 
@@ -1453,41 +1153,21 @@ async function cash(){
     if(!d.session){
       $("adminContent").innerHTML=
         '<div class="panel"><h2>💰 Caixa</h2><div class="notice">Nenhum caixa está aberto.</div>'+ 
-         
+        '<div class="field"><label>Valor inicial / troco</label><input id="cashOpening" type="number" step="0.01" min="0" value="0"></div>'+ 
         '<button class="btn" onclick="openCash()">Abrir caixa</button></div>'+cashHistoryHtml(h);
       return;
     }
     const x=d.summary;
-    const oa=d.open_accounts||{count:0,total:0};
-    const receipts=Array.isArray(d.receipts)?d.receipts:[];
-    window.__currentCashData=d;
-    const pendingNotice=Number(oa.count)>0
-      ?'<div class="notice" style="margin-top:10px">⚠️ Não é possível fechar o caixa agora. Existem <b>'+Number(oa.count)+' comanda(s) aberta(s)</b>, totalizando <b>'+R(Number(oa.total||0))+'</b>.</div>'
-      :'';
-    const closeButton=Number(oa.count)>0
-      ?'<button class="secondary" disabled>Fechar caixa bloqueado</button>'
-      :'<button class="btn" onclick="closeCashForm('+d.session.id+')">Fechar caixa</button>';
-    const receiptsHtml=!receipts.length
-      ?'<div class="empty">Nenhuma conta recebida neste caixa ainda.</div>'
-      :receipts.map(r=>{
-        const label=String(r.account_type||'Mesa')==='Avulsa'
-          ?(String(r.customer_name||'Comanda avulsa').trim()||'Comanda avulsa')
-          :'Mesa '+Number(r.table_number);
-        const mp=!!r.mercado_pago_verified;
-        const source=mp?'💎 Mercado Pago':'✅ PIX manual';
-        const sourceStyle=mp?'background:#0d6335;color:#dfffea;border:1px solid #16864a':'background:#625000;color:#fff0a7;border:1px solid #8f7400';
-        return '<div class="saleRow"><div><b>'+E(label)+'</b><div style="color:#aaa">'+new Date(r.closed_at).toLocaleString("pt-BR")+' • '+Number(r.order_count||0)+' pedido(s)</div><div style="margin-top:5px"><span style="display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:800;'+sourceStyle+'">'+source+'</span></div></div><div style="text-align:right"><b class="price">'+R(Number(r.total||0))+'</b></div></div>';
-      }).join('');
     $("adminContent").innerHTML=
       '<div class="panel"><div class="row"><h2>💰 Caixa aberto</h2><span class="badgeOpen">ABERTO</span></div>'+ 
       '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Fundo inicial: <b>'+R(d.session.opening_amount)+'</b></div>'+ 
       '<div class="cashSummary">'+
-        '<div class="cashBox"><small>💎 PIX Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+
-        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+
-        '<div class="cashBox"><small>PIX total</small><strong>'+R(x.pix)+'</strong></div>'+ 
+        '<div class="cashBox"><small>PIX</small><strong>'+R(x.pix)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Dinheiro</small><strong>'+R(x.dinheiro)+'</strong></div>'+ 
+        '<div class="cashBox"><small>Cartão</small><strong>'+R(x.cartao)+'</strong></div>'+ 
         '<div class="cashBox"><small>Total vendido</small><strong>'+R(x.sales_total)+'</strong></div>'+ 
-      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+pendingNotice+closeButton+'</div>'+
-      '<div class="panel"><h2>🧾 Recebimentos deste caixa</h2>'+receiptsHtml+'</div>'+cashHistoryHtml(h);
+      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+ 
+      '<button class="btn" onclick="closeCashForm('+d.session.id+','+(Number(d.session.opening_amount)+Number(x.dinheiro))+')">Fechar caixa</button></div>'+cashHistoryHtml(h);
   }catch(e){alert(e.message)}
 }
 
@@ -1495,114 +1175,31 @@ function cashHistoryHtml(h){
   const closed=h.filter(x=>x.status==="Fechado");
   return '<div class="panel"><h2>Últimos fechamentos</h2>'+(!closed.length?'<div class="empty">Nenhum fechamento registrado.</div>':closed.slice(0,10).map(x=>
     '<div class="saleRow"><div><b>Caixa #'+x.id+'</b><div style="color:#aaa">'+new Date(x.opened_at).toLocaleString("pt-BR")+' → '+new Date(x.closed_at).toLocaleString("pt-BR")+'</div></div>'+ 
-    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Total recebido</div><button class="secondary" style="margin-top:8px" onclick="cashDetails('+x.id+')">Ver detalhes</button></div></div>'
+    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Esperado em dinheiro: '+R(x.expected_amount)+'</div></div></div>'
   ).join(""))+'</div>';
 }
 
 async function openCash(){
   try{
-    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:0})});
+    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:Number($("cashOpening").value||0)})});
     cash();
   }catch(e){alert(e.message)}
 }
 
-function cashReceiptRows(receipts){
-  if(!Array.isArray(receipts)||!receipts.length)return '<div class="empty">Nenhum recebimento registrado.</div>';
-  return receipts.map(r=>{
-    const label=String(r.account_type||'Mesa')==='Avulsa'
-      ?(String(r.customer_name||'Comanda avulsa').trim()||'Comanda avulsa')
-      :'Mesa '+Number(r.table_number);
-    const mp=!!r.mercado_pago_verified;
-    const source=mp?'💎 Mercado Pago':'✅ PIX manual';
-    return '<div class="saleRow"><div><b>'+E(label)+'</b><div style="color:#aaa">'+new Date(r.closed_at).toLocaleString("pt-BR")+' • '+Number(r.order_count||0)+' pedido(s)</div><div style="margin-top:4px">'+source+'</div></div><div style="text-align:right"><b class="price">'+R(Number(r.total||0))+'</b></div></div>';
-  }).join('');
-}
-
-async function closeCashForm(id){
-  try{
-    // Busca os dados novamente no momento do clique para evitar qualquer resumo antigo em cache.
-    const d=await api("/api/cash");
-    if(!d.session || Number(d.session.id)!==Number(id)){
-      throw new Error("Este caixa não está mais aberto. Atualize a tela.");
-    }
-    const x=d.summary||{};
-    const s=d.session||{};
-    const receipts=Array.isArray(d.receipts)?d.receipts:[];
-    const oa=d.open_accounts||{count:0,total:0};
-    if(Number(oa.count||0)>0){
-      alert("Não é possível fechar o caixa. Existem "+Number(oa.count)+" comanda(s) aberta(s), totalizando "+R(Number(oa.total||0))+".");
-      return;
-    }
-
-    const receiptTotal=receipts.reduce((sum,r)=>sum+Number(r.total||0),0);
-    const mercadoPagoPix=Number(x.mercado_pago_pix||0);
-    const manualPix=Number(x.manual_pix||0);
-    const pixTotal=Number(x.pix||0);
-    const salesTotal=Number(x.sales_total||0);
-    const sourceCheck=mercadoPagoPix+manualPix;
-    const diffSources=sourceCheck-pixTotal;
-    const diffList=receiptTotal-salesTotal;
-    const diffSales=pixTotal-salesTotal;
-    const integrityOk=Math.abs(diffSources)<0.01 && Math.abs(diffList)<0.01 && Math.abs(diffSales)<0.01;
-    const integrityHtml=integrityOk
-      ?'<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#0d4027;border:1px solid #197548;color:#d9ffea;font-weight:800">✅ Conferência financeira consistente</div>'
-      :'<div style="margin-top:10px;padding:12px;border-radius:10px;background:#5a1a1a;border:1px solid #b83333;color:#ffdede;font-weight:800">⚠️ Divergência financeira encontrada.<div style="font-weight:500;margin-top:7px;line-height:1.45">Origens PIX − PIX total: <b>'+R(diffSources)+'</b><br>Lista de recebimentos − Total vendido: <b>'+R(diffList)+'</b><br>PIX total − Total vendido: <b>'+R(diffSales)+'</b></div><div style="margin-top:7px">O fechamento foi bloqueado até a conferência dos valores.</div></div>';
-
-    modal(
-      '<h2>💰 Conferência de fechamento</h2>'+ 
-      '<div class="notice">Aberto em <b>'+new Date(s.opened_at).toLocaleString("pt-BR")+'</b> • Fundo inicial: <b>'+R(Number(s.opening_amount||0))+'</b></div>'+ 
-      '<div class="cashSummary" style="margin-top:10px">'+
-        '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(mercadoPagoPix)+'</strong></div>'+ 
-        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(manualPix)+'</strong></div>'+ 
-        '<div class="cashBox"><small>PIX total</small><strong>'+R(pixTotal)+'</strong></div>'+ 
-        '<div class="cashBox"><small>Total vendido</small><strong>'+R(salesTotal)+'</strong></div>'+ 
-      '</div>'+ 
-      '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+' conta(s)</b> recebida(s) • Soma da lista: <b>'+R(receiptTotal)+'</b></div>'+ 
-      integrityHtml+
-      '<h3 style="margin:18px 0 6px">🧾 Contas incluídas neste fechamento</h3>'+ 
-      '<div style="border:1px solid #333;border-radius:12px;padding:0 10px">'+cashReceiptRows(receipts)+'</div>'+ 
-      '<div class="field" style="margin-top:16px"><label>Observação (opcional)</label><textarea id="cashNote" placeholder="Ex.: conferido, sem divergências"></textarea></div>'+ 
-      '<div class="notice" style="margin-top:10px">Ao confirmar, este caixa será encerrado com <b>'+R(salesTotal)+'</b> em vendas e <b>'+Number(x.count||0)+'</b> conta(s) recebida(s).</div>'+ 
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+
-        '<button class="btn" '+(integrityOk?'':'disabled style="opacity:.45;cursor:not-allowed"')+' onclick="closeCash('+id+')">✅ Confirmar fechamento</button>'+
-        '<button class="secondary" onclick="closeModal()">Cancelar</button>'+
-      '</div>'
-    );
-  }catch(e){alert(e.message)}
+function closeCashForm(id,expected){
+  modal('<h2>Fechar caixa</h2><div class="notice">Dinheiro esperado na gaveta: <b>'+R(expected)+'</b></div>'+ 
+    '<div class="field"><label>Valor contado na gaveta</label><input id="cashClosing" type="number" step="0.01" min="0"></div>'+ 
+    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNotes"></textarea></div>'+ 
+    '<button class="btn" onclick="closeCash('+id+')">Confirmar fechamento</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
 }
 
 async function closeCash(id){
+  const v=Number($("cashClosing").value);
+  if(!Number.isFinite(v)||v<0){alert("Informe o valor contado no caixa.");return}
+  if(!confirm("Confirmar fechamento do caixa?"))return;
   try{
-    const note=$("cashNote").value.trim();
-    await api("/api/cash/"+id+"/close",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({notes:note})
-    });
-    closeModal();
-    cash();
-  }catch(e){alert(e.message)}
-}
-
-async function cashDetails(id){
-  try{
-    const d=await api("/api/cash/"+id+"/details");
-    const x=d.summary||{};
-    const s=d.session||{};
-    modal(
-      '<h2>🧾 Detalhes do Caixa #'+Number(s.id||id)+'</h2>'+ 
-      '<div class="notice">'+new Date(s.opened_at).toLocaleString("pt-BR")+' → '+(s.closed_at?new Date(s.closed_at).toLocaleString("pt-BR"):'Aberto')+'</div>'+ 
-      '<div class="cashSummary" style="margin-top:10px">'+
-        '<div class="cashBox"><small>💎 Mercado Pago</small><strong>'+R(Number(x.mercado_pago_pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>✅ PIX manual</small><strong>'+R(Number(x.manual_pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>PIX total</small><strong>'+R(Number(x.pix||0))+'</strong></div>'+ 
-        '<div class="cashBox"><small>Total recebido</small><strong>'+R(Number(x.sales_total||x.pix||0))+'</strong></div>'+ 
-      '</div>'+ 
-      '<div class="notice" style="margin-top:10px"><b>'+Number(x.count||0)+' conta(s) recebida(s)</b> • Soma detalhada: '+R((d.receipts||[]).reduce((z,r)=>z+Number(r.total||0),0))+'</div>'+ 
-      '<div style="margin-top:12px"><h3 style="margin:0 0 8px;color:#fff">🧾 Recebimentos deste caixa</h3>'+cashReceiptRows(d.receipts||[])+'</div>'+ 
-      (String(s.notes||'').trim()?'<div class="notice" style="margin-top:12px"><b>Observação:</b> '+E(String(s.notes))+'</div>':'')+
-      '<div style="margin-top:14px"><button class="secondary" onclick="closeModal()">Fechar</button></div>'
-    );
+    const r=await api("/api/cash/"+id+"/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({closing_amount:v,notes:$("cashNotes").value})});
+    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Valor contado: <b>'+R(r.session.closing_amount)+'</b></p><p>Diferença: <b>'+R(r.difference)+'</b></p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
   }catch(e){alert(e.message)}
 }
 
@@ -1643,9 +1240,7 @@ async function periodReport(start,end){
         '</div>'+
         '<div class="reportSummary">'+
           '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>💎 PIX Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
-          '<div class="reportBox"><small>✅ PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
           '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
           '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
           '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
@@ -1681,9 +1276,7 @@ function exportPeriodCSV(){
     ["Relatório por período",r.start,r.end],[],
     ["Resumo"],
     ["Total",r.summary.total],
-    ["PIX Mercado Pago",r.summary.mercado_pago_pix||0],
-    ["PIX manual",r.summary.manual_pix||0],
-    ["PIX total",r.summary.pix],
+    ["PIX",r.summary.pix],
     ["Dinheiro",r.summary.dinheiro],
     ["Cartão",r.summary.cartao],
     ["Contas",r.summary.contas],
@@ -1721,30 +1314,26 @@ async function dailyReport(date){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório diário - '+new Date(chosen+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
-        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="btn" onclick="downloadDailyReportPdf()">📄 BAIXAR RELATÓRIO PDF</button> <button class="secondary" onclick="printDailyReport()">🖨️ Imprimir</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
+        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="secondary" onclick="printDailyReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
           '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
           '<button class="secondary" onclick="dailyReport(todayLocal())">Hoje</button>'+
         '</div>'+
         '<div class="reportSummary">'+
-          '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>💎 PIX Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
-          '<div class="reportBox"><small>✅ PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
           '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
           '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
-          '<div class="reportBox"><small>Contas fechadas</small><strong>'+r.summary.contas+'</strong></div>'+
-          '<div class="reportBox"><small>Ticket médio</small><strong>'+R(r.summary.ticket_medio||0)+'</strong></div>'+
-          '<div class="reportBox"><small>Itens vendidos</small><strong>'+(r.summary.itens||0)+'</strong></div>'+
+          '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
+          '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
           '<div class="reportBox"><small>Custo dos produtos vendidos</small><strong>'+R(r.summary.custo)+'</strong></div>'+
           '<div class="reportBox"><small>Lucro bruto</small><strong>'+R(r.summary.lucro_bruto)+'</strong></div>'+
-          '<div class="reportBox"><small>Margem bruta</small><strong>'+((Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0).toFixed(1).replace(".",",")+"%")+'</strong></div>'+
         '</div>'+
         '<div class="reportSection"><h3>Contas fechadas</h3>'+
           (r.accounts.length?
             '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
-            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||'-'))+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
             '</tbody></table></div>'
           :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
         '</div>'+
@@ -1773,53 +1362,6 @@ function printDailyReport(){
   window.print();
 }
 
-
-function downloadDailyReportPdf(){
-  const r=window.__dailyReport;
-  if(!r){alert("Abra primeiro o relatório diário.");return}
-  if(!window.jspdf||!window.jspdf.jsPDF){
-    alert("Não foi possível carregar o gerador de PDF. Atualize a página e tente novamente.");
-    return;
-  }
-  const {jsPDF}=window.jspdf;
-  const doc=new jsPDF({unit:"mm",format:"a4"});
-  const safe=x=>String(x??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-  const money=v=>Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
-  const margin=Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0;
-  let y=16;
-  const check=(need=12)=>{if(y+need>282){doc.addPage();y=16}};
-  const title=t=>{check(12);doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text(safe(t),15,y);y+=7;doc.setDrawColor(150);doc.line(15,y,195,y);y+=6};
-  const row=(left,right)=>{check(7);doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(safe(left),18,y);if(right!==undefined)doc.text(safe(right),192,y,{align:"right"});y+=6};
-  doc.setFont("helvetica","bold");doc.setFontSize(18);doc.text("CANTINHO DOS GIGANTES",105,y,{align:"center"});y+=9;
-  doc.setFontSize(14);doc.text("RELATORIO DIARIO",105,y,{align:"center"});y+=7;
-  doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(new Date(r.date+"T12:00:00").toLocaleDateString("pt-BR"),105,y,{align:"center"});y+=10;
-  title("RESUMO FINANCEIRO");
-  row("Faturamento",money(r.summary.total));
-  row("PIX Mercado Pago",money(r.summary.mercado_pago_pix||0));
-  row("PIX manual",money(r.summary.manual_pix||0));
-  row("PIX total",money(r.summary.pix));
-  row("Dinheiro",money(r.summary.dinheiro));
-  row("Cartao",money(r.summary.cartao));
-  row("Contas fechadas",String(r.summary.contas||0));
-  row("Ticket medio",money(r.summary.ticket_medio||0));
-  row("Itens vendidos",String(r.summary.itens||0));
-  row("Custo dos produtos vendidos",money(r.summary.custo||0));
-  row("Lucro bruto",money(r.summary.lucro_bruto||0));
-  row("Margem bruta",margin.toFixed(1).replace(".",",")+"%");
-  title("CONTAS FECHADAS");
-  if((r.accounts||[]).length){
-    for(const a of r.accounts){
-      const time=new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-      const pay=a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||'-');
-      row("Mesa "+a.table_number+" | "+time+" | "+pay+" | "+a.order_count+" pedido(s)",money(a.total));
-    }
-  }else row("Nenhuma conta fechada nesta data.");
-  title("PRODUTOS VENDIDOS");
-  if((r.products||[]).length){for(const p of r.products)row((p.quantity||0)+"x "+safe(p.name),money(p.total));}
-  else row("Nenhum produto vendido nesta data.");
-  check(18);y+=5;doc.line(15,y,195,y);y+=6;doc.setFontSize(8);doc.text("Gerado pelo sistema Cantinho dos Gigantes em "+new Date().toLocaleString("pt-BR"),105,y,{align:"center"});
-  doc.save("relatorio-diario-"+r.date+".pdf");
-}
 
 function downloadPeriodReportPdf(){
   const r=window.__periodReport;
@@ -1860,9 +1402,7 @@ function downloadPeriodReportPdf(){
 
   title("RESUMO");
   row("Faturamento",money(r.summary.total));
-  row("PIX Mercado Pago",money(r.summary.mercado_pago_pix||0));
-  row("PIX manual",money(r.summary.manual_pix||0));
-  row("PIX total",money(r.summary.pix));
+  row("PIX",money(r.summary.pix));
   row("Dinheiro",money(r.summary.dinheiro));
   row("Cartao",money(r.summary.cartao));
   row("Contas fechadas",String(r.summary.contas||0));
@@ -1907,21 +1447,17 @@ function exportDailyCSV(){
   const rows=[
     ["Relatório diário",r.date],[],
     ["Resumo"],
-    ["Faturamento",r.summary.total],
-    ["PIX Mercado Pago",r.summary.mercado_pago_pix||0],
-    ["PIX manual",r.summary.manual_pix||0],
-    ["PIX total",r.summary.pix],
+    ["Total",r.summary.total],
+    ["PIX",r.summary.pix],
     ["Dinheiro",r.summary.dinheiro],
     ["Cartão",r.summary.cartao],
-    ["Contas fechadas",r.summary.contas],
-    ["Ticket médio",r.summary.ticket_medio||0],
-    ["Itens vendidos",r.summary.itens||0],
+    ["Contas",r.summary.contas],
+    ["Faturamento",r.summary.total],
     ["Custo dos produtos vendidos",r.summary.custo],
-    ["Lucro bruto",r.summary.lucro_bruto],
-    ["Margem bruta (%)",Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0],[],
+    ["Lucro bruto",r.summary.lucro_bruto],[],
     ["Contas fechadas"],
     ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
-    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||''),a.order_count,a.total]),[],
+    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method||"",a.order_count,a.total]),[],
     ["Produtos vendidos"],
     ["Produto","Quantidade","Total"],
     ...r.products.map(p=>[p.name,p.quantity,p.total])
