@@ -1635,7 +1635,9 @@ async function periodReport(start,end){
         '</div>'+
         '<div class="reportSummary">'+
           '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>💎 PIX Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>✅ PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
           '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
           '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
           '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
@@ -1671,7 +1673,9 @@ function exportPeriodCSV(){
     ["Relatório por período",r.start,r.end],[],
     ["Resumo"],
     ["Total",r.summary.total],
-    ["PIX",r.summary.pix],
+    ["PIX Mercado Pago",r.summary.mercado_pago_pix||0],
+    ["PIX manual",r.summary.manual_pix||0],
+    ["PIX total",r.summary.pix],
     ["Dinheiro",r.summary.dinheiro],
     ["Cartão",r.summary.cartao],
     ["Contas",r.summary.contas],
@@ -1709,26 +1713,30 @@ async function dailyReport(date){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="printHeader"><h1>Cantinho dos Gigantes</h1><p>Relatório diário - '+new Date(chosen+'T12:00:00').toLocaleDateString("pt-BR")+'</p></div>'+ 
-        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="secondary" onclick="printDailyReport()">🖨️ Imprimir / Salvar PDF</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
+        '<div class="row"><h2>📅 Relatório diário</h2><div class="noPrint"><button class="btn" onclick="downloadDailyReportPdf()">📄 BAIXAR RELATÓRIO PDF</button> <button class="secondary" onclick="printDailyReport()">🖨️ Imprimir</button> <button class="secondary" onclick="exportDailyCSV()">Exportar CSV</button></div></div>'+
         '<div class="reportFilters">'+
           '<div class="field"><label>Data</label><input id="reportDate" type="date" value="'+E(chosen)+'"></div>'+
           '<button class="btn" onclick="dailyReport($(\'reportDate\').value)">Buscar</button>'+
           '<button class="secondary" onclick="dailyReport(todayLocal())">Hoje</button>'+
         '</div>'+
         '<div class="reportSummary">'+
-          '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
+          '<div class="reportBox"><small>💎 PIX Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>✅ PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
           '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
           '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
-          '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
-          '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
+          '<div class="reportBox"><small>Contas fechadas</small><strong>'+r.summary.contas+'</strong></div>'+
+          '<div class="reportBox"><small>Ticket médio</small><strong>'+R(r.summary.ticket_medio||0)+'</strong></div>'+
+          '<div class="reportBox"><small>Itens vendidos</small><strong>'+(r.summary.itens||0)+'</strong></div>'+
           '<div class="reportBox"><small>Custo dos produtos vendidos</small><strong>'+R(r.summary.custo)+'</strong></div>'+
           '<div class="reportBox"><small>Lucro bruto</small><strong>'+R(r.summary.lucro_bruto)+'</strong></div>'+
+          '<div class="reportBox"><small>Margem bruta</small><strong>'+((Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0).toFixed(1).replace(".",",")+"%")+'</strong></div>'+
         '</div>'+
         '<div class="reportSection"><h3>Contas fechadas</h3>'+
           (r.accounts.length?
             '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
-            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||'-'))+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
             '</tbody></table></div>'
           :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
         '</div>'+
@@ -1757,6 +1765,53 @@ function printDailyReport(){
   window.print();
 }
 
+
+function downloadDailyReportPdf(){
+  const r=window.__dailyReport;
+  if(!r){alert("Abra primeiro o relatório diário.");return}
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("Não foi possível carregar o gerador de PDF. Atualize a página e tente novamente.");
+    return;
+  }
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const safe=x=>String(x??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const money=v=>Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  const margin=Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0;
+  let y=16;
+  const check=(need=12)=>{if(y+need>282){doc.addPage();y=16}};
+  const title=t=>{check(12);doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text(safe(t),15,y);y+=7;doc.setDrawColor(150);doc.line(15,y,195,y);y+=6};
+  const row=(left,right)=>{check(7);doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(safe(left),18,y);if(right!==undefined)doc.text(safe(right),192,y,{align:"right"});y+=6};
+  doc.setFont("helvetica","bold");doc.setFontSize(18);doc.text("CANTINHO DOS GIGANTES",105,y,{align:"center"});y+=9;
+  doc.setFontSize(14);doc.text("RELATORIO DIARIO",105,y,{align:"center"});y+=7;
+  doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(new Date(r.date+"T12:00:00").toLocaleDateString("pt-BR"),105,y,{align:"center"});y+=10;
+  title("RESUMO FINANCEIRO");
+  row("Faturamento",money(r.summary.total));
+  row("PIX Mercado Pago",money(r.summary.mercado_pago_pix||0));
+  row("PIX manual",money(r.summary.manual_pix||0));
+  row("PIX total",money(r.summary.pix));
+  row("Dinheiro",money(r.summary.dinheiro));
+  row("Cartao",money(r.summary.cartao));
+  row("Contas fechadas",String(r.summary.contas||0));
+  row("Ticket medio",money(r.summary.ticket_medio||0));
+  row("Itens vendidos",String(r.summary.itens||0));
+  row("Custo dos produtos vendidos",money(r.summary.custo||0));
+  row("Lucro bruto",money(r.summary.lucro_bruto||0));
+  row("Margem bruta",margin.toFixed(1).replace(".",",")+"%");
+  title("CONTAS FECHADAS");
+  if((r.accounts||[]).length){
+    for(const a of r.accounts){
+      const time=new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+      const pay=a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||'-');
+      row("Mesa "+a.table_number+" | "+time+" | "+pay+" | "+a.order_count+" pedido(s)",money(a.total));
+    }
+  }else row("Nenhuma conta fechada nesta data.");
+  title("PRODUTOS VENDIDOS");
+  if((r.products||[]).length){for(const p of r.products)row((p.quantity||0)+"x "+safe(p.name),money(p.total));}
+  else row("Nenhum produto vendido nesta data.");
+  check(18);y+=5;doc.line(15,y,195,y);y+=6;doc.setFontSize(8);doc.text("Gerado pelo sistema Cantinho dos Gigantes em "+new Date().toLocaleString("pt-BR"),105,y,{align:"center"});
+  doc.save("relatorio-diario-"+r.date+".pdf");
+}
 
 function downloadPeriodReportPdf(){
   const r=window.__periodReport;
@@ -1797,7 +1852,9 @@ function downloadPeriodReportPdf(){
 
   title("RESUMO");
   row("Faturamento",money(r.summary.total));
-  row("PIX",money(r.summary.pix));
+  row("PIX Mercado Pago",money(r.summary.mercado_pago_pix||0));
+  row("PIX manual",money(r.summary.manual_pix||0));
+  row("PIX total",money(r.summary.pix));
   row("Dinheiro",money(r.summary.dinheiro));
   row("Cartao",money(r.summary.cartao));
   row("Contas fechadas",String(r.summary.contas||0));
@@ -1842,17 +1899,21 @@ function exportDailyCSV(){
   const rows=[
     ["Relatório diário",r.date],[],
     ["Resumo"],
-    ["Total",r.summary.total],
-    ["PIX",r.summary.pix],
+    ["Faturamento",r.summary.total],
+    ["PIX Mercado Pago",r.summary.mercado_pago_pix||0],
+    ["PIX manual",r.summary.manual_pix||0],
+    ["PIX total",r.summary.pix],
     ["Dinheiro",r.summary.dinheiro],
     ["Cartão",r.summary.cartao],
-    ["Contas",r.summary.contas],
-    ["Faturamento",r.summary.total],
+    ["Contas fechadas",r.summary.contas],
+    ["Ticket médio",r.summary.ticket_medio||0],
+    ["Itens vendidos",r.summary.itens||0],
     ["Custo dos produtos vendidos",r.summary.custo],
-    ["Lucro bruto",r.summary.lucro_bruto],[],
+    ["Lucro bruto",r.summary.lucro_bruto],
+    ["Margem bruta (%)",Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0],[],
     ["Contas fechadas"],
     ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
-    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method||"",a.order_count,a.total]),[],
+    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method==='PIX'?(a.payment_source||'PIX'):(a.payment_method||''),a.order_count,a.total]),[],
     ["Produtos vendidos"],
     ["Produto","Quantidade","Total"],
     ...r.products.map(p=>[p.name,p.quantity,p.total])
