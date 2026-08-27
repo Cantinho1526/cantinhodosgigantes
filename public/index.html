@@ -940,16 +940,16 @@ async function productForm(id){
       '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
       '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
       '<div class="field"><label>📷 Foto do produto</label>'+
-        '<input id="pi" value="'+E(p.image||"")+'" placeholder="URL da foto (opcional)" style="margin-bottom:8px">'+
+        '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
         '<input id="pfile" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="chooseProductPhoto(this)">'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-          '<button type="button" class="secondary" onclick="document.getElementById(\'pfile\').click()">📷 Escolher foto do celular/computador</button>'+
-          '<button type="button" class="secondary" onclick="removeProductPhoto()">🗑️ Remover foto</button>'+
+          '<button type="button" class="secondary" onclick="document.getElementById(\'pfile\').click()">📷 '+(p.image?'Trocar foto':'Escolher foto do celular/computador')+'</button>'+
+          '<button id="removePhotoBtn" type="button" class="secondary" onclick="removeProductPhoto()" style="'+(p.image?'':'display:none;')+'">🗑️ Remover foto</button>'+
         '</div>'+
         '<div id="photoPreviewWrap" style="margin-top:10px;'+(p.image?'':'display:none;')+'">'+
-          '<img id="photoPreview" src="'+E(p.image||'')+'" alt="Prévia da foto" style="width:100%;max-height:240px;object-fit:cover;border-radius:12px;border:1px solid #4a3b00">'+
+          '<img id="photoPreview" src="'+E(p.image||'')+'" alt="Prévia da foto" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;border:1px solid #4a3b00">'+
         '</div>'+
-        '<div style="font-size:12px;color:#aaa;margin-top:7px">Você pode escolher uma foto diretamente do aparelho. O sistema reduz a imagem automaticamente antes de salvar.</div>'+
+        '<div id="photoStatus" style="font-size:12px;color:#aaa;margin-top:7px">'+(p.image?'Foto carregada. Você pode trocar ou remover antes de salvar.':'Escolha uma foto JPG, PNG ou WEBP diretamente do aparelho.')+'</div>'+
       '</div>'+
       '<div class="field"><label><input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
       '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
@@ -978,6 +978,9 @@ async function chooseProductPhoto(input){
     const img=$("photoPreview"),wrap=$("photoPreviewWrap");
     if(img)img.src=dataUrl;
     if(wrap)wrap.style.display="block";
+    const rb=$("removePhotoBtn"),st=$("photoStatus");
+    if(rb)rb.style.display="";
+    if(st)st.textContent="Nova foto selecionada. Clique em Salvar para confirmar.";
   }catch(e){
     console.error(e);
     alert("Não foi possível preparar a foto. Tente outra imagem.");
@@ -1013,11 +1016,13 @@ function resizeProductPhoto(file){
 }
 
 function removeProductPhoto(){
-  const input=$("pi"),file=$("pfile"),img=$("photoPreview"),wrap=$("photoPreviewWrap");
+  const input=$("pi"),file=$("pfile"),img=$("photoPreview"),wrap=$("photoPreviewWrap"),rb=$("removePhotoBtn"),st=$("photoStatus");
   if(input)input.value="";
   if(file)file.value="";
   if(img)img.removeAttribute("src");
   if(wrap)wrap.style.display="none";
+  if(rb)rb.style.display="none";
+  if(st)st.textContent="Foto removida. Clique em Salvar para confirmar.";
 }
 
 async function saveProduct(id){
