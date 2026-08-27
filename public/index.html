@@ -1515,7 +1515,8 @@ async function profitPanel(start,end){
     const productMap=new Map(products.map(p=>[normName(p.name),p]));
     const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
     const historicalCosts=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
-    const sold=(r.products||[]).map(x=>{
+    const ignoredHistorical=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
+    const soldAll=(r.products||[]).map(x=>{
       const key=normName(x.name);
       const aliasId=Number(aliases[key]||0);
       const p=productMap.get(key)||products.find(z=>Number(z.id)===aliasId);
@@ -1526,15 +1527,19 @@ async function profitPanel(start,end){
       const estCost=unitCost>0?unitCost*qty:null;
       const estProfit=estCost===null?null:revenue-estCost;
       const estMargin=estProfit===null||revenue<=0?null:(estProfit/revenue)*100;
-      return {...x,product:p,unitCost,estCost,estProfit,estMargin};
+      return {...x,product:p,unitCost,estCost,estProfit,estMargin,key,ignored:Boolean(ignoredHistorical[key])};
     });
+    const ignoredSold=soldAll.filter(x=>x.ignored);
+    const ignoredRevenue=ignoredSold.reduce((n,x)=>n+Number(x.total||0),0);
+    const sold=soldAll.filter(x=>!x.ignored);
+    const adjustedTotal=Math.max(0,total-ignoredRevenue);
 
     const soldWithoutCost=sold.filter(x=>!x.product||x.unitCost<=0);
     const unitsMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.quantity||0),0);
     const revenueMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.total||0),0);
     const catalogWithoutCost=products.filter(p=>Number(p.cost_price||0)<=0);
-    const coveredRevenue=Math.max(0,total-revenueMissing);
-    const coverage=total>0?Math.max(0,Math.min(100,(coveredRevenue/total)*100)):100;
+    const coveredRevenue=Math.max(0,adjustedTotal-revenueMissing);
+    const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):100;
     const partialProfit=coveredRevenue-historicalCost;
     const partialMargin=coveredRevenue>0?(partialProfit/coveredRevenue)*100:0;
 
@@ -1547,7 +1552,7 @@ async function profitPanel(start,end){
     const missingRows=soldWithoutCost.map(x=>{
       const btn=x.product
         ? '<button class="secondary" onclick="productForm('+x.product.id+')">💰 Cadastrar custo</button>'
-        : '<button class="secondary" onclick="historicalMatchForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🔗 Associar produto</button> <button class="secondary" onclick="historicalCostForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🕘 Custo histórico</button>';
+        : '<button class="secondary" onclick="historicalMatchForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🔗 Associar produto</button> <button class="secondary" onclick="historicalCostForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🕘 Custo histórico</button> <button class="danger" onclick="ignoreHistoricalSale('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🚫 Ignorar teste</button>';
       const status=x.product
         ? '<span style="color:#ffb74d;font-weight:800">⚠️ Ativo sem custo</span>'
         : '<span style="color:#90caf9;font-weight:800">🕘 Histórico não localizado</span>';
@@ -1564,7 +1569,8 @@ async function profitPanel(start,end){
           '<button class="btn" onclick="profitPanel($(\'profitStart\').value,$(\'profitEnd\').value)">Atualizar</button>'+
         '</div>'+
         '<div class="reportSummary">'+
-          '<div class="reportBox"><small>Faturamento total</small><strong>'+R(total)+'</strong></div>'+
+          '<div class="reportBox"><small>Faturamento considerado</small><strong>'+R(adjustedTotal)+'</strong></div>'+
+          (ignoredRevenue>0?'<div class="reportBox"><small>Vendas ignoradas</small><strong>'+R(ignoredRevenue)+'</strong></div>':'')+
           '<div class="reportBox"><small>Faturamento com custo conhecido</small><strong>'+R(coveredRevenue)+'</strong></div>'+
           '<div class="reportBox"><small>Custo conhecido nas vendas</small><strong>'+R(historicalCost)+'</strong></div>'+
           '<div class="reportBox"><small>Lucro parcial conhecido</small><strong>'+R(partialProfit)+'</strong></div>'+
@@ -1585,6 +1591,8 @@ async function profitPanel(start,end){
           '<div style="color:#aaa;font-size:13px;margin-top:8px">O <b>lucro parcial conhecido</b> considera somente a parcela do faturamento coberta por custos gravados. Enquanto a cobertura estiver abaixo de 100%, não trate esse valor como lucro total do período.</div>'+
         '</div>'+
 
+        (ignoredSold.length?'<div class="reportSection"><h3>🚫 Vendas ignoradas no cálculo</h3><div style="color:#aaa;margin-bottom:10px">Estas vendas continuam no histórico, mas não entram no faturamento, lucro, margem, cobertura de custos ou pendências deste painel.</div><div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Ação</th></tr></thead><tbody>'+ignoredSold.map(x=>'<tr><td><b>'+E(x.name)+'</b></td><td>'+Number(x.quantity||0)+'</td><td>'+R(x.total)+'</td><td><button class="secondary" onclick="restoreHistoricalSale('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">↩️ Voltar a considerar</button></td></tr>').join('')+'</tbody></table></div></div>':'')+
+
         (soldWithoutCost.length?'<div class="reportSection"><div class="row"><div><h3>⚠️ Produtos vendidos sem custo</h3><div style="color:#aaa">Itens ativos podem ser corrigidos no Cardápio. Itens históricos podem ser associados a um produto atual (por exemplo, Coração → Espeto de coração) ou receber um custo histórico quando realmente não existirem mais.</div></div><button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button></div>'+
           '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+missingRows+'</tbody></table></div></div>':'')+
 
@@ -1595,6 +1603,23 @@ async function profitPanel(start,end){
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
+}
+
+function historicalSaleKey(name){
+  return String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
+function ignoreHistoricalSale(name){
+  if(!confirm("Ignorar \""+name+"\" nos cálculos do Painel de lucro?\n\nA venda NÃO será apagada. Ela continuará no histórico, mas deixará de entrar no faturamento, lucro, margem, cobertura de custos e pendências deste painel."))return;
+  const ignored=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
+  ignored[historicalSaleKey(name)]={name:String(name),ignoredAt:new Date().toISOString()};
+  localStorage.setItem("ignoredHistoricalSales",JSON.stringify(ignored));
+  const p=window.__profitPanel; profitPanel(p.start,p.end);
+}
+function restoreHistoricalSale(name){
+  const ignored=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
+  delete ignored[historicalSaleKey(name)];
+  localStorage.setItem("ignoredHistoricalSales",JSON.stringify(ignored));
+  const p=window.__profitPanel; profitPanel(p.start,p.end);
 }
 
 function historicalMatchForm(name){
