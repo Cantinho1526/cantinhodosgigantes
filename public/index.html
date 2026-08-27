@@ -1511,11 +1511,14 @@ async function profitPanel(start,end){
 
     const total=Number(r.summary.total||0);
     const historicalCost=Number(r.summary.custo||0);
-    const productMap=new Map(products.map(p=>[String(p.name||"").trim().toLowerCase(),p]));
+    const normName=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+    const productMap=new Map(products.map(p=>[normName(p.name),p]));
+    const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
     const historicalCosts=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
     const sold=(r.products||[]).map(x=>{
-      const key=String(x.name||"").trim().toLowerCase();
-      const p=productMap.get(key);
+      const key=normName(x.name);
+      const aliasId=Number(aliases[key]||0);
+      const p=productMap.get(key)||products.find(z=>Number(z.id)===aliasId);
       const historicalUnitCost=Number(historicalCosts[key]||0);
       const unitCost=Number(p?.cost_price||0)>0?Number(p.cost_price):historicalUnitCost;
       const qty=Number(x.quantity||0);
@@ -1544,7 +1547,7 @@ async function profitPanel(start,end){
     const missingRows=soldWithoutCost.map(x=>{
       const btn=x.product
         ? '<button class="secondary" onclick="productForm('+x.product.id+')">💰 Cadastrar custo</button>'
-        : '<button class="secondary" onclick="historicalCostForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🕘 Informar custo histórico</button>';
+        : '<button class="secondary" onclick="historicalMatchForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🔗 Associar produto</button> <button class="secondary" onclick="historicalCostForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🕘 Custo histórico</button>';
       const status=x.product
         ? '<span style="color:#ffb74d;font-weight:800">⚠️ Ativo sem custo</span>'
         : '<span style="color:#90caf9;font-weight:800">🕘 Histórico não localizado</span>';
@@ -1582,7 +1585,7 @@ async function profitPanel(start,end){
           '<div style="color:#aaa;font-size:13px;margin-top:8px">O <b>lucro parcial conhecido</b> considera somente a parcela do faturamento coberta por custos gravados. Enquanto a cobertura estiver abaixo de 100%, não trate esse valor como lucro total do período.</div>'+
         '</div>'+
 
-        (soldWithoutCost.length?'<div class="reportSection"><div class="row"><div><h3>⚠️ Produtos vendidos sem custo</h3><div style="color:#aaa">Itens ativos podem ser corrigidos no Cardápio. Itens históricos continuam no relatório e podem receber um custo histórico sem recriar o produto.</div></div><button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button></div>'+
+        (soldWithoutCost.length?'<div class="reportSection"><div class="row"><div><h3>⚠️ Produtos vendidos sem custo</h3><div style="color:#aaa">Itens ativos podem ser corrigidos no Cardápio. Itens históricos podem ser associados a um produto atual (por exemplo, Coração → Espeto de coração) ou receber um custo histórico quando realmente não existirem mais.</div></div><button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button></div>'+
           '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+missingRows+'</tbody></table></div></div>':'')+
 
         '<div class="reportSection"><h3>🏆 Produtos vendidos no período</h3>'+
@@ -1592,6 +1595,26 @@ async function profitPanel(start,end){
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
+}
+
+function historicalMatchForm(name){
+  const p=window.__profitPanel;
+  const products=(p&&p.products)||[];
+  const key=String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
+  const current=Number(aliases[key]||0);
+  const opts=products.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),"pt-BR")).map(x=>'<option value="'+x.id+'" '+(Number(x.id)===current?'selected':'')+'>'+E(x.name)+(Number(x.cost_price||0)>0?' • custo '+R(x.cost_price):' • sem custo')+'</option>').join("");
+  modal('<h2>🔗 Associar venda histórica</h2><div class="notice">Nome registrado na venda: <b>'+E(name)+'</b></div><div class="field"><label>Produto atual correspondente</label><select id="historicalAliasProduct"><option value="">Selecione...</option>'+opts+'</select></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">A associação não altera o nome da venda antiga nem recria pedidos. Ela apenas informa ao Painel de lucro qual produto atual corresponde a esse nome histórico e permite usar seu custo cadastrado.</div><button class="btn" onclick="saveHistoricalMatch('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar associação</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+}
+function saveHistoricalMatch(name){
+  const id=Number($("historicalAliasProduct").value||0);
+  if(!id){alert("Selecione o produto atual correspondente.");return}
+  const key=String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
+  aliases[key]=id;
+  localStorage.setItem("historicalProductAliases",JSON.stringify(aliases));
+  closeModal();
+  const p=window.__profitPanel; profitPanel(p.start,p.end);
 }
 
 function historicalCostForm(name){
