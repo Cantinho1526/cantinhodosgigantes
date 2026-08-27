@@ -935,17 +935,21 @@ async function productForm(id){
     const margin=hasProductCost&&price>0?(profit/price)*100:null;
     modal(
       '<style>'+ 
-        '#productFormV50 .pfSection{border:1px solid #3a3a3a;border-radius:14px;padding:14px;margin:0 0 14px;background:#151515}'+
-        '#productFormV50 .pfTitle{font-weight:900;color:#ffd34d;font-size:17px;margin-bottom:12px}'+
-        '#productFormV50 .pfGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}'+
+        '#productFormV50 .pfSection{border:1px solid #3a3a3a;border-radius:14px;padding:11px 12px;margin:0 0 10px;background:#151515}'+
+        '#productFormV50 .pfTitle{font-weight:900;color:#ffd34d;font-size:16px;margin-bottom:9px}'+
+        '#productFormV50 .pfGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px 10px}'+
         '#productFormV50 .pfGrid .field{margin:0}'+
         '#productFormV50 .pfFull{grid-column:1/-1}'+
-        '#productFormV50 .pfFinance{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}'+
-        '#productFormV50 .pfMetric{border:1px solid #4a3b00;border-radius:10px;padding:9px;background:#101010}'+
+        '#productFormV50 .pfFinance{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:8px}'+
+        '#productFormV50 .pfMetric{border:1px solid #4a3b00;border-radius:10px;padding:7px 8px;background:#101010;min-height:58px}'+
         '#productFormV50 .pfMetric small{display:block;color:#aaa;margin-bottom:4px}'+
         '#productFormV50 .pfMetric b{color:#ffd34d;font-size:16px}'+
-        '#productFormV50 .pfActions{position:sticky;bottom:-1px;background:#171717;padding:10px 0 2px;border-top:1px solid #333;margin-top:12px;z-index:2}'+
-        '@media(max-width:700px){#productFormV50 .pfGrid,#productFormV50 .pfFinance{grid-template-columns:1fr}#productFormV50 .pfFull{grid-column:auto}}'+
+        '#productFormV50 .pfActions{position:sticky;bottom:-1px;background:#171717;padding:8px 0 2px;border-top:1px solid #333;margin-top:8px;z-index:2}'+
+        '#productFormV50 textarea#pd{min-height:68px;height:68px;resize:vertical}'+
+        '#productFormV50 .pfVisualGrid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;align-items:start}'+
+        '#productFormV50 .pfVisualGrid .pfSection{margin-bottom:0}'+
+        '#productFormV50 input,#productFormV50 select{min-height:42px}'+
+        '@media(max-width:700px){#productFormV50 .pfGrid,#productFormV50 .pfFinance,#productFormV50 .pfVisualGrid{grid-template-columns:1fr}#productFormV50 .pfFull{grid-column:auto}#productFormV50 textarea#pd{min-height:62px;height:62px}}'+
       '</style>'+ 
       '<div id="productFormV50">'+
       '<h2 style="margin-bottom:14px">'+(id?'✏️ Editar produto':'➕ Novo produto')+'</h2>'+
@@ -968,9 +972,10 @@ async function productForm(id){
         '<div class="pfMetric"><small>Margem bruta</small><b id="pfMargin">'+(hasProductCost?margin.toFixed(1).replace('.',',')+'%':'—')+'</b></div>'+
         '<div class="pfMetric"><small>Preço de venda</small><b id="pfSale">'+R(price)+'</b></div>'+
       '</div>'+
-      '<div id="pfCostNotice" class="notice" style="margin-top:10px;'+(hasProductCost?'display:none;':'')+'">💡 Custo não informado. Lucro e margem só serão calculados quando houver um custo unitário maior que zero.</div>'+
+      '<div id="pfCostNotice" class="notice" style="margin-top:8px;padding:8px 10px;font-size:13px;line-height:1.25;'+(hasProductCost?'display:none;':'')+'">💡 <b>Custo não informado.</b> Lucro e margem aparecem após informar um custo maior que zero.</div>'+
       '</div>'+
 
+      '<div class="pfVisualGrid">'+
       '<div class="pfSection"><div class="pfTitle">📷 Foto do produto</div>'+
         '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
         '<input id="pfile" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="chooseProductPhoto(this)">'+
@@ -978,10 +983,10 @@ async function productForm(id){
           '<button type="button" class="secondary" onclick="document.getElementById(\'pfile\').click()">📷 '+(p.image?'Trocar foto':'Escolher foto do celular/computador')+'</button>'+
           '<button id="removePhotoBtn" type="button" class="secondary" onclick="removeProductPhoto()" style="'+(p.image?'':'display:none;')+'">🗑️ Remover foto</button>'+
         '</div>'+
-        '<div id="photoPreviewWrap" style="margin-top:10px;'+(p.image?'':'display:none;')+'">'+
-          '<img id="photoPreview" src="'+E(p.image||'')+'" alt="Prévia da foto" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;border:1px solid #4a3b00">'+
+        '<div id="photoPreviewWrap" style="margin-top:8px;'+(p.image?'':'display:none;')+'">'+
+          '<img id="photoPreview" src="'+E(p.image||'')+'" alt="Prévia da foto" style="width:100%;max-height:135px;object-fit:cover;border-radius:12px;border:1px solid #4a3b00">'+
         '</div>'+
-        '<div id="photoStatus" style="font-size:12px;color:#aaa;margin-top:7px">'+(p.image?'Foto carregada. Você pode trocar ou remover antes de salvar.':'Escolha uma foto JPG, PNG ou WEBP diretamente do aparelho.')+'</div>'+
+        '<div id="photoStatus" style="font-size:12px;color:#aaa;margin-top:5px">'+(p.image?'Foto carregada. Você pode trocar ou remover antes de salvar.':'Escolha uma foto JPG, PNG ou WEBP diretamente do aparelho.')+'</div>'+
       '</div>'+
 
       '<div class="pfSection"><div class="pfTitle">📦 Controle de estoque</div>'+
@@ -989,11 +994,13 @@ async function productForm(id){
           '<input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+' onchange="toggleProductStockFields()" style="width:20px;height:20px;flex:0 0 auto;accent-color:#ffc107">'+
           '<span>Controlar estoque deste produto</span>'+ 
         '</label>'+
-        '<div id="productStockFields" class="pfGrid" style="margin-top:12px;'+(p.stock_control?'':'display:none;')+'">'+
+        '<div id="stockInactiveHint" style="margin-top:7px;padding:7px 9px;border:1px solid #333;border-radius:10px;color:#aaa;font-size:13px;'+(p.stock_control?'display:none;':'')+'">Estoque desativado para este produto. Ative acima se quiser controlar quantidade e receber alerta de reposição.</div>'+
+        '<div id="productStockFields" class="pfGrid" style="margin-top:9px;'+(p.stock_control?'':'display:none;')+'">'+
           '<div class="field"><label>Quantidade atual</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
           '<div class="field"><label>⚠️ Alerta de estoque baixo</label><input id="psl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
-          '<div class="notice pfFull">O alerta aparecerá quando o estoque chegar a esse número ou ficar abaixo dele.</div>'+
+          '<div class="notice pfFull" style="padding:8px 10px;font-size:13px">O alerta aparecerá quando o estoque atingir esse número ou ficar abaixo dele.</div>'+
         '</div>'+
+      '</div>'+
       '</div>'+
 
       '<div class="pfActions"><button class="btn" onclick="saveProduct('+(id||0)+')">✅ Salvar produto</button> '+
@@ -1020,9 +1027,10 @@ function updateProductFinancePreview(){
 }
 
 function toggleProductStockFields(){
-  const check=$("psc"), wrap=$("productStockFields");
+  const check=$("psc"), wrap=$("productStockFields"), hint=$("stockInactiveHint");
   if(!check||!wrap)return;
   wrap.style.display=check.checked?"grid":"none";
+  if(hint)hint.style.display=check.checked?"none":"block";
 }
 
 async function chooseProductPhoto(input){
