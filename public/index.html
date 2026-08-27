@@ -926,20 +926,48 @@ async function productForm(id){
     const products=await api("/api/admin/products");
     const cats=await api("/api/admin/categories");
     const p=id?products.find(x=>x.id===id):{
-      name:"",description:"",price:"",cost_price:0,category_id:cats[0]?.id||1,emoji:"🍽️",image:"",stock_quantity:0,stock_control:false
+      name:"",description:"",price:"",cost_price:0,category_id:cats[0]?.id||1,emoji:"🍽️",image:"",stock_quantity:0,stock_control:false,stock_low_threshold:5
     };
 
+    const price=Number(p.price||0), cost=Number(p.cost_price||0);
+    const profit=Math.max(0,price-cost), margin=price>0?(profit/price)*100:0;
     modal(
-      '<h2>'+(id?'Editar produto':'Novo produto')+'</h2>'+
-      '<div class="field"><label>Nome</label><input id="pn" value="'+E(p.name)+'"></div>'+
-      '<div class="field"><label>Preço</label><input id="pp" type="number" step=".01" value="'+p.price+'"></div>'+
-      '<div class="field"><label>💰 Custo de compra (somente Admin)</label><input id="pcost" type="number" min="0" step=".01" value="'+Number(p.cost_price||0)+'"></div>'+
-      '<div class="field"><label>Categoria</label><select id="pc">'+
-        cats.map(c=>'<option value="'+c.id+'" '+(c.id===p.category_id?"selected":"")+'>'+E(c.name)+'</option>').join("")+
-      '</select></div>'+
-      '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'"></div>'+
-      '<div class="field"><label>Descrição</label><textarea id="pd">'+E(p.description)+'</textarea></div>'+
-      '<div class="field"><label>📷 Foto do produto</label>'+
+      '<style>'+ 
+        '#productFormV50 .pfSection{border:1px solid #3a3a3a;border-radius:14px;padding:14px;margin:0 0 14px;background:#151515}'+
+        '#productFormV50 .pfTitle{font-weight:900;color:#ffd34d;font-size:17px;margin-bottom:12px}'+
+        '#productFormV50 .pfGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}'+
+        '#productFormV50 .pfGrid .field{margin:0}'+
+        '#productFormV50 .pfFull{grid-column:1/-1}'+
+        '#productFormV50 .pfFinance{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}'+
+        '#productFormV50 .pfMetric{border:1px solid #4a3b00;border-radius:10px;padding:9px;background:#101010}'+
+        '#productFormV50 .pfMetric small{display:block;color:#aaa;margin-bottom:4px}'+
+        '#productFormV50 .pfMetric b{color:#ffd34d;font-size:16px}'+
+        '#productFormV50 .pfActions{position:sticky;bottom:-1px;background:#171717;padding:10px 0 2px;border-top:1px solid #333;margin-top:12px;z-index:2}'+
+        '@media(max-width:700px){#productFormV50 .pfGrid,#productFormV50 .pfFinance{grid-template-columns:1fr}#productFormV50 .pfFull{grid-column:auto}}'+
+      '</style>'+ 
+      '<div id="productFormV50">'+
+      '<h2 style="margin-bottom:14px">'+(id?'✏️ Editar produto':'➕ Novo produto')+'</h2>'+
+
+      '<div class="pfSection"><div class="pfTitle">📝 Informações do produto</div><div class="pfGrid">'+
+        '<div class="field"><label>Nome do produto</label><input id="pn" value="'+E(p.name)+'" placeholder="Ex.: Fritas com Bacon"></div>'+
+        '<div class="field"><label>Categoria</label><select id="pc">'+
+          cats.map(c=>'<option value="'+c.id+'" '+(c.id===p.category_id?"selected":"")+'>'+E(c.name)+'</option>').join("")+
+        '</select></div>'+
+        '<div class="field"><label>Emoji</label><input id="pe" value="'+E(p.emoji)+'" placeholder="🍽️"></div>'+
+        '<div class="field pfFull"><label>Descrição</label><textarea id="pd" placeholder="Descrição que aparece no cardápio">'+E(p.description)+'</textarea></div>'+
+      '</div></div>'+
+
+      '<div class="pfSection"><div class="pfTitle">💰 Preço, custo e margem</div><div class="pfGrid">'+
+        '<div class="field"><label>Preço de venda (R$)</label><input id="pp" type="number" min="0" step=".01" value="'+p.price+'" oninput="updateProductFinancePreview()"></div>'+
+        '<div class="field"><label>Custo unitário (R$)</label><input id="pcost" type="number" min="0" step=".01" value="'+Number(p.cost_price||0)+'" oninput="updateProductFinancePreview()"></div>'+
+      '</div>'+
+      '<div class="pfFinance">'+
+        '<div class="pfMetric"><small>Lucro bruto por unidade</small><b id="pfProfit">'+R(profit)+'</b></div>'+
+        '<div class="pfMetric"><small>Margem bruta</small><b id="pfMargin">'+margin.toFixed(1).replace('.',',')+'%</b></div>'+
+        '<div class="pfMetric"><small>Preço de venda</small><b id="pfSale">'+R(price)+'</b></div>'+
+      '</div></div>'+
+
+      '<div class="pfSection"><div class="pfTitle">📷 Foto do produto</div>'+
         '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
         '<input id="pfile" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="chooseProductPhoto(this)">'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
@@ -951,25 +979,44 @@ async function productForm(id){
         '</div>'+
         '<div id="photoStatus" style="font-size:12px;color:#aaa;margin-top:7px">'+(p.image?'Foto carregada. Você pode trocar ou remover antes de salvar.':'Escolha uma foto JPG, PNG ou WEBP diretamente do aparelho.')+'</div>'+
       '</div>'+
-      '<div class="field" style="margin-top:14px">'+
+
+      '<div class="pfSection"><div class="pfTitle">📦 Controle de estoque</div>'+
         '<label for="psc" style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;font-weight:800;line-height:1.3">'+
           '<input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+' onchange="toggleProductStockFields()" style="width:20px;height:20px;flex:0 0 auto;accent-color:#ffc107">'+
-          '<span>Controlar estoque deste produto</span>'+
+          '<span>Controlar estoque deste produto</span>'+ 
         '</label>'+
+        '<div id="productStockFields" class="pfGrid" style="margin-top:12px;'+(p.stock_control?'':'display:none;')+'">'+
+          '<div class="field"><label>Quantidade atual</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+          '<div class="field"><label>⚠️ Alerta de estoque baixo</label><input id="psl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
+          '<div class="notice pfFull">O alerta aparecerá quando o estoque chegar a esse número ou ficar abaixo dele.</div>'+
+        '</div>'+
       '</div>'+
-      '<div id="productStockFields" style="'+(p.stock_control?'':'display:none;')+'">'+
-        '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
-      '</div>'+
-      '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
-      '<button class="secondary" onclick="closeModal()">Cancelar</button>'
+
+      '<div class="pfActions"><button class="btn" onclick="saveProduct('+(id||0)+')">✅ Salvar produto</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button></div>'+ 
+      '</div>'
     );
+    updateProductFinancePreview();
   }catch(e){alert(e.message)}
+}
+
+function updateProductFinancePreview(){
+  const pp=$("pp"), pc=$("pcost");
+  if(!pp||!pc)return;
+  const price=Math.max(0,Number(pp.value)||0), cost=Math.max(0,Number(pc.value)||0);
+  const profit=price-cost;
+  const margin=price>0?(profit/price)*100:0;
+  if($("pfProfit"))$("pfProfit").textContent=R(profit);
+  if($("pfMargin"))$("pfMargin").textContent=margin.toFixed(1).replace(".",",")+"%";
+  if($("pfSale"))$("pfSale").textContent=R(price);
+  if($("pfProfit"))$("pfProfit").style.color=profit<0?"#ff6b6b":"#ffd34d";
+  if($("pfMargin"))$("pfMargin").style.color=margin<20?"#ff6b6b":margin<40?"#ffb74d":"#79e28a";
 }
 
 function toggleProductStockFields(){
   const check=$("psc"), wrap=$("productStockFields");
   if(!check||!wrap)return;
-  wrap.style.display=check.checked?"block":"none";
+  wrap.style.display=check.checked?"grid":"none";
 }
 
 async function chooseProductPhoto(input){
@@ -1049,7 +1096,8 @@ async function saveProduct(id){
       emoji:$("pe").value||"🍽️",
       image:$("pi").value||"",
       stock_control:$("psc").checked,
-      stock_quantity:Math.max(0,Math.floor(Number($("psq").value)||0))
+      stock_quantity:Math.max(0,Math.floor(Number($("psq")?.value)||0)),
+      stock_low_threshold:Math.max(0,Math.floor(Number($("psl")?.value)||0))
     };
     await api(id?"/api/products/"+id:"/api/products",{
       method:id?"PUT":"POST",
