@@ -951,12 +951,25 @@ async function productForm(id){
         '</div>'+
         '<div id="photoStatus" style="font-size:12px;color:#aaa;margin-top:7px">'+(p.image?'Foto carregada. Você pode trocar ou remover antes de salvar.':'Escolha uma foto JPG, PNG ou WEBP diretamente do aparelho.')+'</div>'+
       '</div>'+
-      '<div class="field"><label><input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
-      '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '<div class="field" style="margin-top:14px">'+
+        '<label for="psc" style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;font-weight:800;line-height:1.3">'+
+          '<input id="psc" type="checkbox" '+(p.stock_control?'checked':'')+' onchange="toggleProductStockFields()" style="width:20px;height:20px;flex:0 0 auto;accent-color:#ffc107">'+
+          '<span>Controlar estoque deste produto</span>'+
+        '</label>'+
+      '</div>'+
+      '<div id="productStockFields" style="'+(p.stock_control?'':'display:none;')+'">'+
+        '<div class="field"><label>Quantidade em estoque</label><input id="psq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '</div>'+
       '<button class="btn" onclick="saveProduct('+(id||0)+')">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
   }catch(e){alert(e.message)}
+}
+
+function toggleProductStockFields(){
+  const check=$("psc"), wrap=$("productStockFields");
+  if(!check||!wrap)return;
+  wrap.style.display=check.checked?"block":"none";
 }
 
 async function chooseProductPhoto(input){
@@ -1258,12 +1271,19 @@ async function stockForm(id){
     const a=await api("/api/stock"),p=a.find(x=>x.id===id);
     if(!p)return;
     modal('<h2>📦 Estoque — '+E(p.name)+'</h2>'+
-      '<div class="field"><label><input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+'> Controlar estoque deste produto</label></div>'+
-      '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+      '<div class="field">'+
+        '<label for="stc" style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;font-weight:800;line-height:1.3">'+
+          '<input id="stc" type="checkbox" '+(p.stock_control?'checked':'')+' onchange="toggleStockAdjustFields()" style="width:20px;height:20px;flex:0 0 auto;accent-color:#ffc107">'+
+          '<span>Controlar estoque deste produto</span>'+
+        '</label>'+
+      '</div>'+
+      '<div id="stockAdjustFields" style="'+(p.stock_control?'':'display:none;')+'">'+
+        '<div class="field"><label>Quantidade atual</label><input id="stq" type="number" min="0" step="1" value="'+Number(p.stock_quantity||0)+'"></div>'+
+        '<div class="field"><label>⚠️ Avisar estoque baixo quando restarem</label><input id="stl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
+        '<div class="notice">Este limite vale somente para este produto. Ex.: 5 significa que o aviso aparece com 5 unidades ou menos.</div>'+
+      '</div>'+
       '<div class="field"><label>💰 Custo unitário (R$)</label><input id="stcost" type="number" min="0" step="0.01" value="'+Number(p.cost_price||0).toFixed(2)+'"></div>'+
       '<div class="notice">Preço de venda atual: <b>'+R(Number(p.price||0))+'</b>. O custo é usado nos relatórios de lucro, margem e valor do estoque.</div>'+
-      '<div class="field"><label>⚠️ Avisar estoque baixo quando restarem</label><input id="stl" type="number" min="0" step="1" value="'+Number(p.stock_low_threshold ?? 5)+'"></div>'+
-      '<div class="notice">Este limite vale somente para este produto. Ex.: 5 significa que o aviso aparece com 5 unidades ou menos.</div>'+
       '<div class="notice">Use <b>Salvar estoque</b> para correções manuais. Para reposição de mercadoria, prefira a entrada abaixo.</div>'+
       '<hr style="border:0;border-top:1px solid #333;margin:18px 0">'+
       '<h3>➕ Entrada de estoque</h3>'+
@@ -1274,6 +1294,12 @@ async function stockForm(id){
       '<button class="secondary" onclick="saveStock('+id+')">Salvar ajuste manual</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>');
   }catch(e){alert(e.message)}
+}
+
+function toggleStockAdjustFields(){
+  const check=$("stc"), wrap=$("stockAdjustFields");
+  if(!check||!wrap)return;
+  wrap.style.display=check.checked?"block":"none";
 }
 
 async function saveStock(id){
