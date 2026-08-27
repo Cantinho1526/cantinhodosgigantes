@@ -657,6 +657,7 @@ async function dashboard(){
         '<button onclick="salesHistory()">📊 Histórico</button>'+
         '<button onclick="dailyReport()">📅 Relatório</button>'+
         '<button onclick="periodReport()">📆 Período</button>'+
+        '<button onclick="profitPanel()">💹 Lucro</button>'+
         '<button onclick="orders()">🧾 Pedidos</button>'+
         '<button onclick="products()">🍽️ Cardápio</button>'+
         '<button onclick="stock()">📦 Estoque</button>'+
@@ -906,9 +907,7 @@ async function products(){
               '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
               '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
               '<div style="font-size:13px;margin-top:4px">'+
-                '<span style="color:#aaa">Custo: '+R(cost)+'</span> • '+
-                '<span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • '+
-                '<span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'+
+                (cost>0?('<span style="color:#aaa">Custo: '+R(cost)+'</span> • <span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • <span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'):'<span style="color:#ffb74d;font-weight:800">⚠️ Custo não informado</span>')+
               '</div>'+
             '</div>'+
             '<div class="productActions">'+
@@ -1498,6 +1497,80 @@ function todayLocal(){
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 
+
+async function profitPanel(start,end){
+  try{
+    const now=todayLocal();
+    const first=start||now.slice(0,8)+"01";
+    const last=end||now;
+    const [r,products]=await Promise.all([
+      api("/api/reports/period?start="+encodeURIComponent(first)+"&end="+encodeURIComponent(last)),
+      api("/api/admin/products")
+    ]);
+    window.__profitPanel={report:r,products,start:first,end:last};
+
+    const total=Number(r.summary.total||0);
+    const cost=Number(r.summary.custo||0);
+    const profit=Number(r.summary.lucro_bruto||0);
+    const margin=total>0?(profit/total)*100:0;
+    const productMap=new Map(products.map(p=>[String(p.name||"").trim().toLowerCase(),p]));
+    const sold=(r.products||[]).map(x=>{
+      const p=productMap.get(String(x.name||"").trim().toLowerCase());
+      const unitCost=Number(p?.cost_price||0);
+      const qty=Number(x.quantity||0);
+      const revenue=Number(x.total||0);
+      const estCost=unitCost>0?unitCost*qty:null;
+      const estProfit=estCost===null?null:revenue-estCost;
+      const estMargin=estProfit===null||revenue<=0?null:(estProfit/revenue)*100;
+      return {...x,product:p,unitCost,estCost,estProfit,estMargin};
+    });
+    const soldWithoutCost=sold.filter(x=>!x.product||x.unitCost<=0);
+    const unitsMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.quantity||0),0);
+    const revenueMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.total||0),0);
+    const catalogWithoutCost=products.filter(p=>Number(p.cost_price||0)<=0);
+    const known=sold.filter(x=>x.estProfit!==null);
+    const knownRevenue=known.reduce((n,x)=>n+Number(x.total||0),0);
+    const knownCost=known.reduce((n,x)=>n+Number(x.estCost||0),0);
+    const knownProfit=knownRevenue-knownCost;
+    const coverage=total>0?Math.max(0,Math.min(100,((total-revenueMissing)/total)*100)):100;
+
+    const statusHtml=soldWithoutCost.length
+      ? '<div style="margin-top:12px;padding:12px 14px;border:1px solid #8a6500;background:#2b2200;border-radius:12px;color:#ffe082">⚠️ <b>Lucro ainda não é definitivo.</b> '+soldWithoutCost.length+' produto(s) vendido(s) no período estão sem custo cadastrado, representando '+R(revenueMissing)+' do faturamento. Cadastre esses custos para o lucro ficar confiável.</div>'
+      : '<div style="margin-top:12px;padding:12px 14px;border:1px solid #147a44;background:#0c3f29;border-radius:12px;color:#b9ffd5">✅ <b>Custos dos produtos vendidos estão cadastrados.</b> O painel possui cobertura de custo completa para este período.</div>';
+
+    const ranking=sold.slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0));
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><div><h2>💹 Painel de lucro</h2><div style="color:#aaa">Visão gerencial de faturamento, custos e margem</div></div></div>'+
+        '<div class="reportFilters">'+
+          '<div class="field"><label>Data inicial</label><input id="profitStart" type="date" value="'+E(first)+'"></div>'+
+          '<div class="field"><label>Data final</label><input id="profitEnd" type="date" value="'+E(last)+'"></div>'+
+          '<button class="btn" onclick="profitPanel($(\'profitStart\').value,$(\'profitEnd\').value)">Atualizar</button>'+
+        '</div>'+
+        '<div class="reportSummary">'+
+          '<div class="reportBox"><small>Faturamento</small><strong>'+R(total)+'</strong></div>'+
+          '<div class="reportBox"><small>Custo registrado</small><strong>'+R(cost)+'</strong></div>'+
+          '<div class="reportBox"><small>Lucro bruto registrado</small><strong>'+R(profit)+'</strong></div>'+
+          '<div class="reportBox"><small>Margem registrada</small><strong>'+margin.toFixed(1).replace(".",",")+'%</strong></div>'+
+          '<div class="reportBox"><small>Cobertura de custos</small><strong>'+coverage.toFixed(1).replace(".",",")+'%</strong></div>'+
+          '<div class="reportBox"><small>Itens sem custo</small><strong>'+unitsMissing+'</strong></div>'+
+        '</div>'+statusHtml+
+        '<div class="reportSection"><h3>📌 Diagnóstico dos custos</h3>'+
+          '<div class="reportSummary">'+
+            '<div class="reportBox"><small>Produtos no cardápio sem custo</small><strong>'+catalogWithoutCost.length+'</strong></div>'+
+            '<div class="reportBox"><small>Produtos vendidos sem custo</small><strong>'+soldWithoutCost.length+'</strong></div>'+
+            '<div class="reportBox"><small>Faturamento sem custo conhecido</small><strong>'+R(revenueMissing)+'</strong></div>'+
+            '<div class="reportBox"><small>Lucro estimado apenas nos itens com custo atual</small><strong>'+R(knownProfit)+'</strong></div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="reportSection"><div class="row"><h3>🏆 Produtos vendidos no período</h3>'+(soldWithoutCost.length?'<button class="secondary" onclick="stock(\'nocost\')">💰 Cadastrar custos faltantes</button>':'')+'</div>'+
+          (ranking.length?'<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Custo atual</th><th>Lucro estimado*</th><th>Margem*</th></tr></thead><tbody>'+
+            ranking.map(x=>'<tr><td>'+E(x.name)+(x.estProfit===null?' <span style="color:#ffb74d;font-size:12px">⚠️ sem custo</span>':'')+'</td><td>'+x.quantity+'</td><td>'+R(x.total)+'</td><td>'+(x.unitCost>0?R(x.unitCost):'—')+'</td><td>'+(x.estProfit===null?'—':R(x.estProfit))+'</td><td>'+(x.estMargin===null?'—':x.estMargin.toFixed(1).replace(".",",")+'%')+'</td></tr>').join("")+
+            '</tbody></table></div><div style="color:#888;font-size:12px;margin-top:8px">* Estimativa por produto usando o custo unitário atualmente cadastrado. O resumo superior continua usando o custo registrado nas vendas.</div>':'<div class="empty">Nenhuma venda no período.</div>')+
+        '</div>'+
+      '</div>';
+  }catch(e){alert(e.message)}
+}
 
 async function periodReport(start,end){
   try{
