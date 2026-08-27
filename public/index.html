@@ -930,7 +930,9 @@ async function productForm(id){
     };
 
     const price=Number(p.price||0), cost=Number(p.cost_price||0);
-    const profit=Math.max(0,price-cost), margin=price>0?(profit/price)*100:0;
+    const hasProductCost=cost>0;
+    const profit=hasProductCost?(price-cost):null;
+    const margin=hasProductCost&&price>0?(profit/price)*100:null;
     modal(
       '<style>'+ 
         '#productFormV50 .pfSection{border:1px solid #3a3a3a;border-radius:14px;padding:14px;margin:0 0 14px;background:#151515}'+
@@ -959,13 +961,15 @@ async function productForm(id){
 
       '<div class="pfSection"><div class="pfTitle">💰 Preço, custo e margem</div><div class="pfGrid">'+
         '<div class="field"><label>Preço de venda (R$)</label><input id="pp" type="number" min="0" step=".01" value="'+p.price+'" oninput="updateProductFinancePreview()"></div>'+
-        '<div class="field"><label>Custo unitário (R$)</label><input id="pcost" type="number" min="0" step=".01" value="'+Number(p.cost_price||0)+'" oninput="updateProductFinancePreview()"></div>'+
+        '<div class="field"><label>Custo unitário (R$)</label><input id="pcost" type="number" min="0" step=".01" value="'+(cost>0?cost:'')+'" placeholder="Ex.: 6,00" oninput="updateProductFinancePreview()"></div>'+
       '</div>'+
       '<div class="pfFinance">'+
-        '<div class="pfMetric"><small>Lucro bruto por unidade</small><b id="pfProfit">'+R(profit)+'</b></div>'+
-        '<div class="pfMetric"><small>Margem bruta</small><b id="pfMargin">'+margin.toFixed(1).replace('.',',')+'%</b></div>'+
+        '<div class="pfMetric"><small>Lucro bruto por unidade</small><b id="pfProfit">'+(hasProductCost?R(profit):'—')+'</b></div>'+
+        '<div class="pfMetric"><small>Margem bruta</small><b id="pfMargin">'+(hasProductCost?margin.toFixed(1).replace('.',',')+'%':'—')+'</b></div>'+
         '<div class="pfMetric"><small>Preço de venda</small><b id="pfSale">'+R(price)+'</b></div>'+
-      '</div></div>'+
+      '</div>'+
+      '<div id="pfCostNotice" class="notice" style="margin-top:10px;'+(hasProductCost?'display:none;':'')+'">💡 Custo não informado. Lucro e margem só serão calculados quando houver um custo unitário maior que zero.</div>'+
+      '</div>'+
 
       '<div class="pfSection"><div class="pfTitle">📷 Foto do produto</div>'+
         '<input id="pi" type="hidden" value="'+E(p.image||"")+'">'+
@@ -1004,13 +1008,15 @@ function updateProductFinancePreview(){
   const pp=$("pp"), pc=$("pcost");
   if(!pp||!pc)return;
   const price=Math.max(0,Number(pp.value)||0), cost=Math.max(0,Number(pc.value)||0);
-  const profit=price-cost;
-  const margin=price>0?(profit/price)*100:0;
-  if($("pfProfit"))$("pfProfit").textContent=R(profit);
-  if($("pfMargin"))$("pfMargin").textContent=margin.toFixed(1).replace(".",",")+"%";
+  const hasCost=cost>0;
+  const profit=hasCost?(price-cost):null;
+  const margin=hasCost&&price>0?(profit/price)*100:null;
+  if($("pfProfit"))$("pfProfit").textContent=hasCost?R(profit):"—";
+  if($("pfMargin"))$("pfMargin").textContent=hasCost?margin.toFixed(1).replace(".",",")+"%":"—";
   if($("pfSale"))$("pfSale").textContent=R(price);
-  if($("pfProfit"))$("pfProfit").style.color=profit<0?"#ff6b6b":"#ffd34d";
-  if($("pfMargin"))$("pfMargin").style.color=margin<20?"#ff6b6b":margin<40?"#ffb74d":"#79e28a";
+  if($("pfCostNotice"))$("pfCostNotice").style.display=hasCost?"none":"block";
+  if($("pfProfit"))$("pfProfit").style.color=!hasCost?"#aaa":profit<0?"#ff6b6b":"#ffd34d";
+  if($("pfMargin"))$("pfMargin").style.color=!hasCost?"#aaa":margin<20?"#ff6b6b":margin<40?"#ffb74d":"#79e28a";
 }
 
 function toggleProductStockFields(){
