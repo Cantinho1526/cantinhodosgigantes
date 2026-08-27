@@ -1512,9 +1512,12 @@ async function profitPanel(start,end){
     const total=Number(r.summary.total||0);
     const historicalCost=Number(r.summary.custo||0);
     const productMap=new Map(products.map(p=>[String(p.name||"").trim().toLowerCase(),p]));
+    const historicalCosts=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
     const sold=(r.products||[]).map(x=>{
-      const p=productMap.get(String(x.name||"").trim().toLowerCase());
-      const unitCost=Number(p?.cost_price||0);
+      const key=String(x.name||"").trim().toLowerCase();
+      const p=productMap.get(key);
+      const historicalUnitCost=Number(historicalCosts[key]||0);
+      const unitCost=Number(p?.cost_price||0)>0?Number(p.cost_price):historicalUnitCost;
       const qty=Number(x.quantity||0);
       const revenue=Number(x.total||0);
       const estCost=unitCost>0?unitCost*qty:null;
@@ -1536,11 +1539,16 @@ async function profitPanel(start,end){
       ? '<div style="margin-top:12px;padding:12px 14px;border:1px solid #8a6500;background:#2b2200;border-radius:12px;color:#ffe082">⚠️ <b>Lucro total ainda não pode ser calculado com segurança.</b> '+soldWithoutCost.length+' produto(s) vendido(s) estão sem custo cadastrado, somando '+R(revenueMissing)+' do faturamento. Abaixo você pode cadastrar esses custos diretamente.</div>'
       : '<div style="margin-top:12px;padding:12px 14px;border:1px solid #147a44;background:#0c3f29;border-radius:12px;color:#b9ffd5">✅ <b>Cobertura completa de custos.</b> Todos os produtos vendidos no período possuem custo cadastrado.</div>';
 
+    const activeMissing=soldWithoutCost.filter(x=>x.product);
+    const historicalMissing=soldWithoutCost.filter(x=>!x.product);
     const missingRows=soldWithoutCost.map(x=>{
       const btn=x.product
         ? '<button class="secondary" onclick="productForm('+x.product.id+')">💰 Cadastrar custo</button>'
-        : '<span style="color:#ffb74d">Produto não localizado no cardápio</span>';
-      return '<tr><td><b>'+E(x.name)+'</b></td><td>'+Number(x.quantity||0)+'</td><td>'+R(x.total)+'</td><td><span style="color:#ffb74d;font-weight:800">⚠️ Sem custo</span></td><td>'+btn+'</td></tr>';
+        : '<button class="secondary" onclick="historicalCostForm('+JSON.stringify(String(x.name)).replace(/"/g,"&quot;")+')">🕘 Informar custo histórico</button>';
+      const status=x.product
+        ? '<span style="color:#ffb74d;font-weight:800">⚠️ Ativo sem custo</span>'
+        : '<span style="color:#90caf9;font-weight:800">🕘 Histórico não localizado</span>';
+      return '<tr><td><b>'+E(x.name)+'</b></td><td>'+Number(x.quantity||0)+'</td><td>'+R(x.total)+'</td><td>'+status+'</td><td>'+btn+'</td></tr>';
     }).join("");
 
     const ranking=sold.slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0));
@@ -1566,14 +1574,15 @@ async function profitPanel(start,end){
         '<div class="reportSection"><h3>📌 Diagnóstico dos custos</h3>'+
           '<div class="reportSummary">'+
             '<div class="reportBox"><small>Produtos no cardápio sem custo</small><strong>'+catalogWithoutCost.length+'</strong></div>'+
-            '<div class="reportBox"><small>Produtos vendidos sem custo</small><strong>'+soldWithoutCost.length+'</strong></div>'+
+            '<div class="reportBox"><small>Ativos vendidos sem custo</small><strong>'+activeMissing.length+'</strong></div>'+
+            '<div class="reportBox"><small>Históricos sem correspondência</small><strong>'+historicalMissing.length+'</strong></div>'+
             '<div class="reportBox"><small>Faturamento coberto por custo</small><strong>'+R(coveredRevenue)+'</strong></div>'+
             '<div class="reportBox"><small>Faturamento ainda sem custo</small><strong>'+R(revenueMissing)+'</strong></div>'+
           '</div>'+
           '<div style="color:#aaa;font-size:13px;margin-top:8px">O <b>lucro parcial conhecido</b> considera somente a parcela do faturamento coberta por custos gravados. Enquanto a cobertura estiver abaixo de 100%, não trate esse valor como lucro total do período.</div>'+
         '</div>'+
 
-        (soldWithoutCost.length?'<div class="reportSection"><div class="row"><div><h3>⚠️ Produtos vendidos sem custo</h3><div style="color:#aaa">Cadastre o custo diretamente para aumentar a cobertura do painel.</div></div><button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button></div>'+
+        (soldWithoutCost.length?'<div class="reportSection"><div class="row"><div><h3>⚠️ Produtos vendidos sem custo</h3><div style="color:#aaa">Itens ativos podem ser corrigidos no Cardápio. Itens históricos continuam no relatório e podem receber um custo histórico sem recriar o produto.</div></div><button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button></div>'+
           '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+missingRows+'</tbody></table></div></div>':'')+
 
         '<div class="reportSection"><h3>🏆 Produtos vendidos no período</h3>'+
@@ -1583,6 +1592,24 @@ async function profitPanel(start,end){
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
+}
+
+function historicalCostForm(name){
+  const key=String(name||"").trim().toLowerCase();
+  const costs=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
+  const current=Number(costs[key]||0);
+  modal('<h2>🕘 Custo histórico</h2><div class="notice">Produto: <b>'+E(name)+'</b></div><div class="field"><label>Custo unitário histórico (R$)</label><input id="historicalCostInput" inputmode="decimal" value="'+(current>0?current.toFixed(2).replace(".",","):"")+'" placeholder="Ex.: 6,00"></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">Este custo será usado no Painel de lucro para vendas históricas deste produto. O item não será recriado no Cardápio.</div><button class="btn" onclick="saveHistoricalCost('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar custo histórico</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+}
+function saveHistoricalCost(name){
+  const raw=String($("historicalCostInput").value||"").replace(/\./g,"").replace(",",".");
+  const value=Number(raw);
+  if(!Number.isFinite(value)||value<=0){alert("Informe um custo maior que zero.");return}
+  const key=String(name||"").trim().toLowerCase();
+  const costs=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
+  costs[key]=value;
+  localStorage.setItem("historicalProductCosts",JSON.stringify(costs));
+  closeModal();
+  const p=window.__profitPanel; profitPanel(p.start,p.end);
 }
 
 async function periodReport(start,end){
