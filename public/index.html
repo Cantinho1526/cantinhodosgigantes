@@ -946,15 +946,15 @@ async function productForm(id){
         '#productFormV50 .pfMetric b{color:#ffd34d;font-size:16px}'+
         '#productFormV50 .pfActions{position:sticky;bottom:-1px;background:#171717;padding:8px 0 2px;border-top:1px solid #333;margin-top:8px;z-index:2}'+
         '#productFormV50 textarea#pd{min-height:68px;height:68px;resize:vertical}'+
-        '#productFormV50 .pfVisualGrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(220px,.85fr);gap:12px;align-items:stretch}'+
-        '#productFormV50 .pfVisualGrid .pfSection{margin-bottom:0;height:100%}'+
-        '#productFormV50 .photoActionRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}'+
-        '#productFormV50 .photoActionRow .secondary{white-space:nowrap;min-height:40px;padding:8px 11px;font-size:14px;max-width:100%}#productFormV50 .photoChooseBtn{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}'+
+        '#productFormV50 .pfVisualGrid{display:grid;grid-template-columns:minmax(300px,1.35fr) minmax(250px,1fr);gap:12px;align-items:stretch}'+
+        '#productFormV50 .pfVisualGrid .pfSection{margin-bottom:0;height:100%;min-width:0}'+
+        '#productFormV50 .photoActionRow{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;min-width:0}'+
+        '#productFormV50 .photoActionRow .secondary{white-space:nowrap;min-height:40px;padding:8px 11px;font-size:14px;max-width:100%}#productFormV50 .photoChooseBtn{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}#productFormV50 .pfVisualGrid .pfTitle{white-space:nowrap}#productFormV50 .stockToggle{min-height:40px;padding:2px 0}#productFormV50 .stockHint{min-height:64px;display:flex;align-items:center}'+
         '#productFormV50 .stockToggle{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:14px;font-weight:800;line-height:1.15;margin:1px 0 0}'+
         '#productFormV50 .stockToggle input{width:19px;height:19px;min-height:0;flex:0 0 auto;accent-color:#ffc107}'+
         '#productFormV50 .stockHint{margin-top:7px;padding:7px 9px;border:1px solid #333;border-radius:10px;color:#aaa;font-size:12px;line-height:1.25}'+
         '#productFormV50 input,#productFormV50 select{min-height:42px}'+
-        '@media(max-width:700px){#productFormV50 .pfGrid,#productFormV50 .pfFinance,#productFormV50 .pfVisualGrid{grid-template-columns:1fr}#productFormV50 .pfFull{grid-column:auto}#productFormV50 textarea#pd{min-height:62px;height:62px}#productFormV50 .photoActionRow{display:flex}#productFormV50 .photoActionRow .secondary{white-space:normal}#productFormV50 .stockToggle{font-size:14px}}'+
+        '@media(max-width:760px){#productFormV50 .pfGrid,#productFormV50 .pfFinance,#productFormV50 .pfVisualGrid{grid-template-columns:1fr}#productFormV50 .pfFull{grid-column:auto}#productFormV50 textarea#pd{min-height:62px;height:62px}#productFormV50 .photoActionRow{display:flex;flex-wrap:wrap}#productFormV50 .photoActionRow .secondary{white-space:normal}#productFormV50 .stockToggle{font-size:14px}#productFormV50 .pfVisualGrid .pfTitle{white-space:normal}#productFormV50 .stockHint{min-height:0}}'+
       '</style>'+ 
       '<div id="productFormV50">'+
       '<h2 style="margin-bottom:14px">'+(id?'✏️ Editar produto':'➕ Novo produto')+'</h2>'+
