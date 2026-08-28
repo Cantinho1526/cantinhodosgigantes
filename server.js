@@ -568,11 +568,13 @@ app.post("/api/orders",async(req,res)=>{
 
 app.get("/api/admin/products",requireAdmin,async(req,res)=>{
   try{
+    const includeArchived=String(req.query.include_archived||"")==="1";
     res.json((await pool.query(`
       select p.*,c.name category
       from products p join categories c on c.id=p.category_id
-      where p.active=true order by c.id,p.id
-    `)).rows);
+      where ($1::boolean=true or p.active=true)
+      order by p.active desc,c.id,p.id
+    `,[includeArchived])).rows);
   }catch(e){res.status(500).json({error:"Erro ao carregar produtos."})}
 });
 
@@ -1326,15 +1328,74 @@ app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
 });
 
+app.get("/api/products/:id/archive-impact",requireAdmin,async(req,res)=>{
+  const id=Number(req.params.id);
+  if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:"Produto inválido."});
+  try{
+    const product=(await pool.query(`
+      select p.id,p.name,p.active,p.stock_control,p.stock_quantity,p.cost_price,p.price,c.name category
+      from products p left join categories c on c.id=p.category_id
+      where p.id=$1
+    `,[id])).rows[0];
+    if(!product)return res.status(404).json({error:"Produto não encontrado."});
+
+    const hist=(await pool.query(`
+      select
+        count(distinct oi.order_id)::int orders,
+        coalesce(sum(oi.quantity),0)::int units,
+        coalesce(sum(oi.quantity*oi.unit_price),0)::numeric revenue
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      where oi.product_id=$1 and o.status<>'Cancelado'
+    `,[id])).rows[0];
+
+    const open=(await pool.query(`
+      select
+        count(distinct oi.order_id)::int orders,
+        coalesce(sum(oi.quantity),0)::int units
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      where oi.product_id=$1 and o.status<>'Cancelado' and a.status='Aberta'
+    `,[id])).rows[0];
+
+    res.json({
+      product:{...product,price:Number(product.price||0),cost_price:Number(product.cost_price||0),stock_quantity:Number(product.stock_quantity||0)},
+      history:{orders:Number(hist.orders||0),units:Number(hist.units||0),revenue:Number(hist.revenue||0)},
+      open:{orders:Number(open.orders||0),units:Number(open.units||0)},
+      safe:true,
+      message:"O arquivamento remove o produto do cardápio sem apagar pedidos, vendas, custos ou relatórios históricos."
+    });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao verificar o histórico do produto."});
+  }
+});
+
 app.delete("/api/products/:id",requireAdmin,async(req,res)=>{
   try{
     const r=await pool.query(
-      "update products set active=false where id=$1 returning id,name",
+      "update products set active=false where id=$1 and active=true returning id,name",
+      [Number(req.params.id)]
+    );
+    if(!r.rowCount){
+      const exists=(await pool.query("select id,name,active from products where id=$1",[Number(req.params.id)])).rows[0];
+      if(!exists)return res.status(404).json({error:"Produto não encontrado."});
+      return res.json({ok:true,already_archived:true});
+    }
+    res.json({ok:true,archived:true,product:r.rows[0]});
+  }catch(e){res.status(500).json({error:"Erro ao arquivar produto."})}
+});
+
+app.post("/api/products/:id/restore",requireAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(
+      "update products set active=true where id=$1 returning id,name",
       [Number(req.params.id)]
     );
     if(!r.rowCount)return res.status(404).json({error:"Produto não encontrado."});
-    res.json({ok:true});
-  }catch(e){res.status(500).json({error:"Erro ao excluir produto."})}
+    res.json({ok:true,restored:true,product:r.rows[0]});
+  }catch(e){res.status(500).json({error:"Erro ao restaurar produto."})}
 });
 
 app.post("/api/categories",requireAdmin,async(req,res)=>{
