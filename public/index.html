@@ -431,7 +431,7 @@ function testOrderAlert(){
 }
 
 const $=x=>document.getElementById(x);
-const R=v=>Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const R=v=>{const n=Number(v);return (Number.isFinite(n)?n:0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})};
 const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 
 async function api(url,opts={}){
@@ -814,28 +814,18 @@ async function viewAccount(tableNumber){
 
 let selectedPayment="";
 function closeAccountForm(accountId,tableNumber,total){
-  selectedPayment="";
+  selectedPayment="PIX";
   modal(
     '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
-    '<p>Escolha a forma de pagamento:</p>'+
-    '<div class="paymentGrid">'+
-      '<button id="payPIX" onclick="selectPayment(\'PIX\')">PIX</button>'+
-      '<button id="payDinheiro" onclick="selectPayment(\'Dinheiro\')">Dinheiro</button>'+
-      '<button id="payCartao" onclick="selectPayment(\'Cartão\')">Cartão</button>'+
-    '</div>'+
-    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">Confirmar pagamento</button> '+
+    '<div class="notice" style="margin-top:10px">💠 Este sistema registra pagamentos somente em <b>PIX</b>. Use este fechamento manual apenas quando o PIX já tiver sido conferido fora do pagamento automático do cliente.</div>'+
+    '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">💠 Confirmar PIX manual</button> '+
     '<button class="secondary" onclick="viewAccount('+tableNumber+')">Voltar</button>'
   );
 }
 
 function selectPayment(method){
   selectedPayment=method;
-  ["PIX","Dinheiro","Cartão"].forEach(x=>{
-    const id=x==="Cartão"?"payCartao":"pay"+x;
-    const el=$(id);
-    if(el)el.classList.toggle("selected",x===method);
-  });
 }
 
 async function confirmCloseAccount(accountId,tableNumber){
@@ -1525,54 +1515,58 @@ async function cash(){
     const h=await api("/api/cash/history");
     if(!d.session){
       $("adminContent").innerHTML=
-        '<div class="panel"><h2>💰 Caixa</h2><div class="notice">Nenhum caixa está aberto.</div>'+ 
-        '<div class="field"><label>Valor inicial / troco</label><input id="cashOpening" type="number" step="0.01" min="0" value="0"></div>'+ 
-        '<button class="btn" onclick="openCash()">Abrir caixa</button></div>'+cashHistoryHtml(h);
+        '<div class="panel"><h2>💰 Caixa</h2><div class="notice">Nenhum caixa está aberto.</div>'+
+        '<div class="notice">💠 O Cantinho dos Gigantes opera somente com PIX. Não há fundo de troco nem conferência de dinheiro físico.</div>'+
+        '<button class="btn" onclick="openCash()">Abrir caixa PIX</button></div>'+cashHistoryHtml(h);
       return;
     }
-    const x=d.summary;
+    const x=d.summary||{};
+    const pix=Number.isFinite(Number(x.pix))?Number(x.pix):0;
+    const mp=Number.isFinite(Number(x.mercado_pago_pix))?Number(x.mercado_pago_pix):0;
+    const manual=Number.isFinite(Number(x.manual_pix))?Number(x.manual_pix):0;
+    const total=Number.isFinite(Number(x.sales_total))?Number(x.sales_total):pix;
+    const count=Number.isFinite(Number(x.count))?Number(x.count):0;
     $("adminContent").innerHTML=
-      '<div class="panel"><div class="row"><h2>💰 Caixa aberto</h2><span class="badgeOpen">ABERTO</span></div>'+ 
-      '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Fundo inicial: <b>'+R(d.session.opening_amount)+'</b></div>'+ 
+      '<div class="panel"><div class="row"><h2>💰 Caixa PIX aberto</h2><span class="badgeOpen">ABERTO</span></div>'+
+      '<div class="notice">Aberto em '+new Date(d.session.opened_at).toLocaleString("pt-BR")+' • Operação financeira: <b>100% PIX</b></div>'+
       '<div class="cashSummary">'+
-        '<div class="cashBox"><small>PIX</small><strong>'+R(x.pix)+'</strong></div>'+ 
-        '<div class="cashBox"><small>Dinheiro</small><strong>'+R(x.dinheiro)+'</strong></div>'+ 
-        '<div class="cashBox"><small>Cartão</small><strong>'+R(x.cartao)+'</strong></div>'+ 
-        '<div class="cashBox"><small>Total vendido</small><strong>'+R(x.sales_total)+'</strong></div>'+ 
-      '</div><p>'+x.count+' conta(s) recebida(s) neste caixa.</p>'+ 
-      '<button class="btn" onclick="closeCashForm('+d.session.id+','+(Number(d.session.opening_amount)+Number(x.dinheiro))+')">Fechar caixa</button></div>'+cashHistoryHtml(h);
+        '<div class="cashBox"><small>PIX total</small><strong>'+R(pix)+'</strong></div>'+
+        '<div class="cashBox"><small>Mercado Pago</small><strong>'+R(mp)+'</strong></div>'+
+        '<div class="cashBox"><small>PIX manual</small><strong>'+R(manual)+'</strong></div>'+
+        '<div class="cashBox"><small>Total vendido</small><strong>'+R(total)+'</strong></div>'+
+      '</div><p>'+count+' conta(s) recebida(s) neste caixa.</p>'+
+      '<button class="btn" onclick="closeCashForm('+d.session.id+','+total+')">Fechar caixa</button></div>'+cashHistoryHtml(h);
   }catch(e){alert(e.message)}
 }
 
 function cashHistoryHtml(h){
   const closed=h.filter(x=>x.status==="Fechado");
   return '<div class="panel"><h2>Últimos fechamentos</h2>'+(!closed.length?'<div class="empty">Nenhum fechamento registrado.</div>':closed.slice(0,10).map(x=>
-    '<div class="saleRow"><div><b>Caixa #'+x.id+'</b><div style="color:#aaa">'+new Date(x.opened_at).toLocaleString("pt-BR")+' → '+new Date(x.closed_at).toLocaleString("pt-BR")+'</div></div>'+ 
-    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Esperado em dinheiro: '+R(x.expected_amount)+'</div></div></div>'
+    '<div class="saleRow"><div><b>Caixa #'+x.id+'</b><div style="color:#aaa">'+new Date(x.opened_at).toLocaleString("pt-BR")+' → '+new Date(x.closed_at).toLocaleString("pt-BR")+'</div></div>'+
+    '<div style="text-align:right"><b>'+R(x.closing_amount)+'</b><div style="color:#aaa">Total PIX registrado: '+R(x.expected_amount)+'</div></div></div>'
   ).join(""))+'</div>';
 }
 
 async function openCash(){
   try{
-    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:Number($("cashOpening").value||0)})});
+    await api("/api/cash/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({opening_amount:0})});
     cash();
   }catch(e){alert(e.message)}
 }
 
-function closeCashForm(id,expected){
-  modal('<h2>Fechar caixa</h2><div class="notice">Dinheiro esperado na gaveta: <b>'+R(expected)+'</b></div>'+ 
-    '<div class="field"><label>Valor contado na gaveta</label><input id="cashClosing" type="number" step="0.01" min="0"></div>'+ 
-    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNotes"></textarea></div>'+ 
+function closeCashForm(id,total){
+  modal('<h2>Fechar caixa PIX</h2><div class="notice">Total PIX registrado nesta sessão: <b>'+R(total)+'</b></div>'+
+    '<div class="notice">O servidor fará a conferência final diretamente pelas comandas PIX fechadas. Não é necessário informar dinheiro contado.</div>'+
+    '<div class="field"><label>Observação (opcional)</label><textarea id="cashNotes"></textarea></div>'+
     '<button class="btn" onclick="closeCash('+id+')">Confirmar fechamento</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
 }
 
 async function closeCash(id){
-  const v=Number($("cashClosing").value);
-  if(!Number.isFinite(v)||v<0){alert("Informe o valor contado no caixa.");return}
-  if(!confirm("Confirmar fechamento do caixa?"))return;
+  if(!confirm("Confirmar fechamento do caixa PIX?"))return;
   try{
-    const r=await api("/api/cash/"+id+"/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({closing_amount:v,notes:$("cashNotes").value})});
-    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Valor contado: <b>'+R(r.session.closing_amount)+'</b></p><p>Diferença: <b>'+R(r.difference)+'</b></p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
+    const notes=$("cashNotes")?$("cashNotes").value:"";
+    const r=await api("/api/cash/"+id+"/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({notes})});
+    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Total PIX registrado: <b>'+R(r.total_received??r.session.closing_amount)+'</b></p><p>Conferência: <b>'+R(r.difference||0)+'</b></p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
   }catch(e){alert(e.message)}
 }
 
