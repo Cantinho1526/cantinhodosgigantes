@@ -32,7 +32,20 @@ button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
 .card p{color:var(--muted);min-height:40px}
 .row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .price{font-weight:900;font-size:20px;color:#ffd34d}
-.wineMeta{margin:-2px 0 12px;padding:8px 10px;border:1px solid #4a3b00;border-radius:10px;background:#111;color:#e8d9b5;font-size:12px;line-height:1.35}
+.wineMeta{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 14px}
+.wineChip{display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:1px solid #5b4600;border-radius:999px;background:#12100a;color:#f0dfb3;font-size:12px;line-height:1.1}
+.wineCard{border-color:#564100;background:linear-gradient(180deg,#17130b 0,#151515 42%);box-shadow:0 12px 28px #0007}
+.wineCard .pic{height:280px;background:radial-gradient(circle at 50% 25%,#3a2a10 0,#17120b 38%,#090909 100%);border-bottom:1px solid #5b4600}
+.wineCard .pic img{object-fit:contain;padding:10px;background:radial-gradient(circle at 50% 45%,#3a2a10 0,#16110a 45%,#090909 100%)}
+.wineCard .cardBody{padding:18px}
+.wineCard h3{font-size:21px;color:#ffe08a;margin-bottom:9px}
+.wineDesc{margin:0;color:#d1d1d1!important;min-height:0!important;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.wineDetailsBtn{margin:2px 0 12px;background:transparent;color:#f0cf73;border:1px solid #5b4600;padding:7px 10px;font-weight:800}
+.wineCard .row{padding-top:4px;border-top:1px solid #332b18}
+.wineCard .price{font-size:23px}
+.tabs{scrollbar-width:thin;scrollbar-color:#5a5a5a #151515}
+.tabs::-webkit-scrollbar{height:7px}.tabs::-webkit-scrollbar-track{background:#151515;border-radius:999px}.tabs::-webkit-scrollbar-thumb{background:#555;border-radius:999px}.tabs::-webkit-scrollbar-thumb:hover{background:#777}
+@media(max-width:760px){.tabs{scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.wineCard .pic{height:220px}.wineCard h3{font-size:19px}.wineDesc{-webkit-line-clamp:3}.wineCard .cardBody{padding:15px}}
 .btn,.primary{background:var(--gold2);color:#111;font-weight:900}
 .secondary{background:#2a2a2a;color:#fff}
 .danger{background:var(--red);color:#fff}
@@ -494,27 +507,53 @@ function isWineProduct(p){
   return String(p?.category||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().includes("vinho");
 }
 
+function wineVintageLabel(v){
+  const raw=String(v||"").trim();
+  if(!raw)return "";
+  if(/^\d{4}$/.test(raw))return "Safra "+raw;
+  if(/^(nao|não)\s+safrado$/i.test(raw))return "Não safrado";
+  return "";
+}
+
 function wineMetaHtml(p){
   if(!isWineProduct(p))return "";
   const bits=[];
-  if(p.wine_type)bits.push(E(p.wine_type));
-  if(p.wine_grape)bits.push("Uva: "+E(p.wine_grape));
-  if(p.wine_origin)bits.push(E(p.wine_origin));
-  if(p.wine_vintage)bits.push("Safra "+E(p.wine_vintage));
-  if(Number(p.wine_volume_ml)>0)bits.push(Number(p.wine_volume_ml)+" ml");
-  return bits.length?'<div class="wineMeta">🍷 '+bits.join(" • ")+'</div>':"";
+  if(p.wine_type)bits.push("🍷 "+E(p.wine_type));
+  if(p.wine_grape)bits.push("🍇 "+E(p.wine_grape));
+  if(p.wine_origin)bits.push("📍 "+E(p.wine_origin));
+  const vintage=wineVintageLabel(p.wine_vintage);
+  if(vintage)bits.push("🗓️ "+E(vintage));
+  if(Number(p.wine_volume_ml)>0)bits.push("🍾 "+Number(p.wine_volume_ml)+" ml");
+  return bits.length?'<div class="wineMeta">'+bits.map(x=>'<span class="wineChip">'+x+'</span>').join("")+'</div>':"";
+}
+
+function wineDetails(id){
+  const p=(M.products||[]).find(x=>Number(x.id)===Number(id));
+  if(!p)return;
+  const rows=[];
+  if(p.wine_type)rows.push(["Tipo",p.wine_type]);
+  if(p.wine_grape)rows.push(["Uva / corte",p.wine_grape]);
+  if(p.wine_origin)rows.push(["Origem",p.wine_origin]);
+  if(p.wine_vintage)rows.push(["Safra",p.wine_vintage]);
+  if(Number(p.wine_volume_ml)>0)rows.push(["Volume",Number(p.wine_volume_ml)+" ml"]);
+  modal('<div style="text-align:left"><h2 style="margin-bottom:6px">🍷 '+E(p.name)+'</h2>'+
+    (rows.length?'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0">'+rows.map(r=>'<div style="background:#101010;border:1px solid #4b3b12;border-radius:10px;padding:10px"><small style="color:#aaa">'+E(r[0])+'</small><div style="font-weight:900;color:#f1dfad;margin-top:3px">'+E(r[1])+'</div></div>').join('')+'</div>':'')+
+    (p.description?'<div style="color:#ddd;line-height:1.55;white-space:pre-line">'+E(p.description)+'</div>':'')+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid #3a3018"><b class="price">'+R(p.price)+'</b><button class="secondary" onclick="closeModal()">Fechar</button></div></div>');
 }
 
 function renderMenu(){
   const products=M.products.filter(p=>C==="Todos"||p.category===C);
   $("products").innerHTML=products.map(p=>{
     const soldOut=Boolean(p.stock_control)&&Number(p.stock_quantity)<=0;
-    return '<article class="card">'+
-      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'">':E(p.emoji))+'</div>'+
+    const wine=isWineProduct(p);
+    return '<article class="card '+(wine?'wineCard':'')+'">'+
+      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'" alt="'+E(p.name)+'">':E(p.emoji))+'</div>'+
       '<div class="cardBody">'+
         '<h3>'+E(p.name)+'</h3>'+
-        '<p>'+E(p.description)+'</p>'+
-        wineMetaHtml(p)+
+        (wine
+          ? ((p.description?'<p class="wineDesc">'+E(p.description)+'</p>':'')+wineMetaHtml(p)+(p.description?'<button class="wineDetailsBtn" onclick="wineDetails('+p.id+')">Ver detalhes</button>':''))
+          : '<p>'+E(p.description)+'</p>')+
         '<div class="row">'+
           '<b class="price">'+R(p.price)+'</b>'+
           (soldOut
@@ -1004,7 +1043,7 @@ async function productForm(id){
         '<div class="field"><label>Tipo</label><select id="pwtype"><option value="">Selecione...</option><option>Tinto</option><option>Branco</option><option>Rosé</option><option>Espumante</option><option>Fortificado</option><option>Sobremesa</option></select></div>'+
         '<div class="field"><label>Uva / corte</label><input id="pwgrape" value="'+E(p.wine_grape||'')+'" placeholder="Ex.: Malbec ou Cabernet/Merlot"></div>'+
         '<div class="field"><label>País / região</label><input id="pworigin" value="'+E(p.wine_origin||'')+'" placeholder="Ex.: Mendoza, Argentina"></div>'+
-        '<div class="field"><label>Safra</label><input id="pwvintage" value="'+E(p.wine_vintage||'')+'" maxlength="20" placeholder="Ex.: 2024 ou Não safrado"></div>'+
+        '<div class="field"><label>Safra</label><input id="pwvintage" value="'+E(p.wine_vintage||'')+'" maxlength="12" placeholder="Ex.: 2024 ou Não safrado"></div>'+
         '<div class="field"><label>Volume (ml)</label><input id="pwvolume" type="number" min="0" step="1" value="'+(p.wine_volume_ml||'')+'" placeholder="750"></div>'+
         '<div class="notice pfFull" style="padding:8px 10px;font-size:13px">Esses dados aparecem de forma elegante no cardápio do cliente e não alteram estoque, custo ou relatórios.</div>'+
       '</div></div>'+
