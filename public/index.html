@@ -424,8 +424,21 @@ async function api(url,opts={}){
   const headers={...(opts.headers||{})};
   if(adminToken)headers["X-Admin-Token"]=adminToken;
 
-  const r=await fetch(url,{...opts,headers});
-  const j=await r.json();
+  let r;
+  try{
+    r=await fetch(url,{...opts,headers});
+  }catch(e){
+    throw Error("Não foi possível conectar ao servidor. Verifique sua internet e tente novamente.");
+  }
+
+  const raw=await r.text();
+  let j={};
+  if(raw){
+    try{j=JSON.parse(raw)}catch(e){
+      console.error("Resposta não JSON da API",url,r.status,raw.slice(0,300));
+      throw Error(r.ok?"O servidor enviou uma resposta inválida. Tente novamente.":"O servidor está temporariamente indisponível. Tente novamente em instantes.");
+    }
+  }
 
   if(r.status===401 && url!=="/api/admin/login"){
     adminToken="";
@@ -438,7 +451,7 @@ async function api(url,opts={}){
     throw Error("Sessão administrativa expirada.");
   }
 
-  if(!r.ok)throw Error(j.error||"Erro");
+  if(!r.ok)throw Error(j.error||"Erro no servidor.");
   return j;
 }
 
@@ -540,6 +553,7 @@ async function sendOrder(mesa){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         table:mesa,
+        access_token:new URLSearchParams(location.search).get("t")||"",
         items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
         observation:$("obs").value
       })
