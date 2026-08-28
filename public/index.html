@@ -951,32 +951,96 @@ async function cleanupOldOrders(){
 }
 
 
+let adminProductCache=[];
+
+function normalizeProductSearch(v){
+  return String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+}
+
+function renderProductAdminList(){
+  const q=normalizeProductSearch($("productSearch")?.value||"");
+  const category=$("productCategoryFilter")?.value||"";
+  const quick=$("productQuickFilter")?.value||"all";
+  const rows=adminProductCache.filter(p=>{
+    const hay=normalizeProductSearch([p.name,p.category,p.description,p.emoji].join(" "));
+    if(q&&!hay.includes(q))return false;
+    if(category&&String(p.category)!==category)return false;
+    const cost=Number(p.cost_price||0);
+    const stock=Number(p.stock_quantity||0);
+    const threshold=Number(p.stock_low_threshold||0);
+    if(quick==="nocost"&&cost>0)return false;
+    if(quick==="lowstock"&&!(p.stock_control&&stock<=threshold))return false;
+    if(quick==="stock"&&!p.stock_control)return false;
+    return true;
+  });
+
+  const box=$("productAdminResults");
+  const count=$("productResultCount");
+  if(count)count.textContent=rows.length+" de "+adminProductCache.length+" produto(s)";
+  if(!box)return;
+  box.innerHTML=rows.length?rows.map(p=>{
+    const price=Number(p.price||0);
+    const cost=Number(p.cost_price||0);
+    const profit=price-cost;
+    const margin=price>0?(profit/price)*100:0;
+    const low=p.stock_control&&Number(p.stock_quantity||0)<=Number(p.stock_low_threshold||0);
+    return '<div class="productRow">'+
+      '<div style="min-width:0">'+
+        '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+ (low?' <span style="color:#ffb74d;font-size:12px;font-weight:900">⚠️ ESTOQUE BAIXO</span>':'')+
+        '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+ 
+        '<div style="font-size:13px;margin-top:4px">'+
+          (cost>0?('<span style="color:#aaa">Custo: '+R(cost)+'</span> • <span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • <span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'):'<span style="color:#ffb74d;font-weight:800">⚠️ Custo não informado</span>')+
+        '</div>'+ 
+      '</div>'+ 
+      '<div class="productActions">'+
+        '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+ 
+        '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+ 
+      '</div>'+ 
+    '</div>';
+  }).join(""):'<div class="empty" style="padding:28px 12px">🔎 Nenhum produto encontrado com esses filtros.</div>';
+}
+
+function clearProductFilters(){
+  if($("productSearch"))$("productSearch").value="";
+  if($("productCategoryFilter"))$("productCategoryFilter").value="";
+  if($("productQuickFilter"))$("productQuickFilter").value="all";
+  renderProductAdminList();
+  $("productSearch")?.focus();
+}
+
 async function products(){
   try{
     const a=await api("/api/admin/products");
+    adminProductCache=a;
+    const categories=[...new Set(a.map(p=>String(p.category||"")).filter(Boolean))].sort((x,y)=>x.localeCompare(y,"pt-BR"));
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><h2>Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+
-        a.map(p=>{
-          const price=Number(p.price||0);
-          const cost=Number(p.cost_price||0);
-          const profit=price-cost;
-          const margin=price>0?(profit/price)*100:0;
-          return '<div class="productRow">'+
-            '<div>'+
-              '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+
-              '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+
-              '<div style="font-size:13px;margin-top:4px">'+
-                (cost>0?('<span style="color:#aaa">Custo: '+R(cost)+'</span> • <span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • <span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'):'<span style="color:#ffb74d;font-weight:800">⚠️ Custo não informado</span>')+
-              '</div>'+
-            '</div>'+
-            '<div class="productActions">'+
-              '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+
-              '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+
-            '</div>'+
-          '</div>';
-        }).join("")+
+        '<style>'+ 
+          '#productAdminTools{margin:14px 0 8px;padding:14px;border:1px solid #4a3b00;border-radius:14px;background:#111}'+
+          '#productAdminTools .patGrid{display:grid;grid-template-columns:minmax(240px,2fr) minmax(170px,1fr) minmax(170px,1fr) auto;gap:10px;align-items:end}'+
+          '#productAdminTools label{display:block;color:#aaa;font-size:12px;font-weight:800;margin:0 0 5px}'+
+          '#productAdminTools input,#productAdminTools select{width:100%;min-height:44px;margin:0}'+
+          '#productAdminTools .searchWrap{position:relative}'+
+          '#productAdminTools .searchWrap span{position:absolute;left:13px;top:50%;transform:translateY(-50%);pointer-events:none}'+
+          '#productAdminTools #productSearch{padding-left:40px}'+
+          '#productResultCount{color:#aaa;font-size:13px;margin-top:9px;font-weight:700}'+
+          '@media(max-width:800px){#productAdminTools .patGrid{grid-template-columns:1fr 1fr}#productAdminTools .patSearch{grid-column:1/-1}}'+
+          '@media(max-width:520px){#productAdminTools .patGrid{grid-template-columns:1fr}#productAdminTools .patSearch{grid-column:auto}#productAdminTools button{width:100%}}'+
+        '</style>'+ 
+        '<div class="row"><h2>🍽️ Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+ 
+        '<div id="productAdminTools">'+
+          '<div class="patGrid">'+
+            '<div class="patSearch"><label>Pesquisar produto</label><div class="searchWrap"><span>🔎</span><input id="productSearch" type="search" placeholder="Digite o nome, categoria ou descrição..." autocomplete="off" oninput="renderProductAdminList()"></div></div>'+ 
+            '<div><label>Categoria</label><select id="productCategoryFilter" onchange="renderProductAdminList()"><option value="">Todas as categorias</option>'+categories.map(c=>'<option value="'+E(c)+'">'+E(c)+'</option>').join("")+'</select></div>'+ 
+            '<div><label>Filtro rápido</label><select id="productQuickFilter" onchange="renderProductAdminList()"><option value="all">Todos os produtos</option><option value="nocost">💰 Sem custo</option><option value="lowstock">⚠️ Estoque baixo</option><option value="stock">📦 Com controle de estoque</option></select></div>'+ 
+            '<button class="secondary" onclick="clearProductFilters()">✕ Limpar</button>'+ 
+          '</div>'+ 
+          '<div id="productResultCount"></div>'+ 
+        '</div>'+ 
+        '<div id="productAdminResults"></div>'+ 
       '</div>';
+    renderProductAdminList();
+    setTimeout(()=>$("productSearch")?.focus(),0);
   }catch(e){alert(e.message)}
 }
 
