@@ -6,9 +6,18 @@ const QRCode=require("qrcode");
 
 const app=express();
 const PORT=process.env.PORT||3000;
-const ADMIN_PIN=process.env.ADMIN_PIN||"1234";
-const MP_ACCESS_TOKEN=process.env.MP_ACCESS_TOKEN||"";
-const TABLE_QR_SECRET=process.env.TABLE_QR_SECRET||ADMIN_PIN;
+const ADMIN_PIN=String(process.env.ADMIN_PIN||"").trim();
+const MP_ACCESS_TOKEN=String(process.env.MP_ACCESS_TOKEN||"").trim();
+const TABLE_QR_SECRET=String(process.env.TABLE_QR_SECRET||"").trim();
+
+if(!ADMIN_PIN){
+  console.error("ADMIN_PIN ausente. Configure a variável no Render antes de iniciar o sistema.");
+  process.exit(1);
+}
+if(!TABLE_QR_SECRET){
+  console.error("TABLE_QR_SECRET ausente. Configure a variável no Render antes de iniciar o sistema.");
+  process.exit(1);
+}
 
 if(!process.env.DATABASE_URL){
   console.error("DATABASE_URL ausente");
@@ -20,7 +29,7 @@ const pool=new Pool({
   ssl:{rejectUnauthorized:false}
 });
 
-app.use(express.json({limit:"5mb"}));
+app.use(express.json({limit:"1mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const ADMIN_SESSION_HOURS=12;
@@ -92,6 +101,9 @@ async function init(){
       closed_at timestamptz
     );
 
+    ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS account_type text NOT NULL DEFAULT 'Mesa';
+    ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS customer_name text DEFAULT '';
+
     CREATE TABLE IF NOT EXISTS orders(
       id serial primary key,
       table_number int not null,
@@ -116,6 +128,10 @@ async function init(){
       note text default '',
       created_at timestamptz not null default now()
     );
+
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS previous_cost numeric(10,2);
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS new_cost numeric(10,2);
+    ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS entry_unit_cost numeric(10,2);
 
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS account_id int REFERENCES table_accounts(id);
 
@@ -159,17 +175,19 @@ async function init(){
       updated_at timestamptz not null default now()
     );
 
-    CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
-    CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
 
     CREATE TABLE IF NOT EXISTS profit_historical_rules(
       normalized_name text primary key,
-      display_name text not null,
+      display_name text not null default '',
       alias_product_id int references products(id),
       historical_unit_cost numeric(10,2),
       ignored boolean not null default false,
       updated_at timestamptz not null default now()
     );
+
+    CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
+    CREATE INDEX IF NOT EXISTS idx_pix_account_status ON pix_payments(account_id,status);
   `);
 
   await pool.query(`
@@ -260,6 +278,7 @@ async function reconcilePaidPixAccounts(){
       const c=await pool.connect();
       try{
         await c.query("begin");
+        await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
 
         const account=(await c.query(
           `select * from table_accounts where id=$1 for update`,
@@ -272,6 +291,13 @@ async function reconcilePaidPixAccounts(){
         );
 
         if(account && account.status==='Aberta'){
+          const cashSession=await getOpenCashSession(c);
+          if(!cashSession){
+            console.error("PIX confirmado sem caixa aberto; comanda mantida aberta para conferência.",{pix_id:p.id,account_id:p.account_id});
+            await c.query("commit");
+            continue;
+          }
+
           // Confere o total da própria comanda vinculada ao PIX.
           const total=Number((await c.query(`
             select coalesce(sum(total),0)::numeric total
@@ -281,12 +307,15 @@ async function reconcilePaidPixAccounts(){
 
           // Só fecha se o valor pago corresponde ao valor da comanda.
           if(Math.abs(total-Number(p.amount))<0.01){
-            await c.query(`
+            const updated=await c.query(`
               update table_accounts
               set status='Fechada',payment_method='PIX',closed_at=now()
-              where id=$1
+              where id=$1 and status='Aberta'
+              returning id
             `,[account.id]);
-            closed++;
+
+            // Incrementa somente quando esta chamada realmente mudou Aberta -> Fechada.
+            if(updated.rowCount===1)closed++;
           }else{
             console.error(
               "PIX pago com valor diferente da comanda:",
@@ -311,29 +340,114 @@ async function reconcilePaidPixAccounts(){
   return {checked:rows.length,closed};
 }
 
+
+const TABLE_ACCOUNT_MAX_OPEN_MS=18*60*60*1000;
+function isStaleTableAccount(account){
+  if(!account || account.account_type!=="Mesa" || !account.opened_at)return false;
+  const opened=new Date(account.opened_at).getTime();
+  return Number.isFinite(opened) && (Date.now()-opened)>TABLE_ACCOUNT_MAX_OPEN_MS;
+}
+function staleTableAccountMessage(){
+  return "Esta mesa possui uma comanda antiga ainda aberta. Peça ao atendimento para fechar ou cancelar a comanda anterior antes de fazer um novo pedido.";
+}
+
+// Todas as operações que mudam o estado financeiro compartilham o mesmo lock.
+// Isso evita corrida entre "fechar conta" e "fechar caixa".
+const FINANCE_LOCK_KEY=734215621;
+
+async function getOpenCashSession(db){
+  return (await db.query(`
+    select * from cash_sessions
+    where status='Aberto'
+    order by id desc limit 1
+  `)).rows[0]||null;
+}
+
+async function getOpenAccountsSummary(db){
+  const r=(await db.query(`
+    select count(*)::int count,coalesce(sum(x.total),0)::numeric total
+    from (
+      select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Aberta'
+      group by a.id
+      having coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)>0
+    ) x
+  `)).rows[0];
+  return {count:Number(r.count||0),total:Number(r.total||0)};
+}
+
+function noOpenCashMessage(){
+  return "Abra o caixa antes de receber ou fechar uma conta. Nenhum pagamento pode ser registrado com o caixa fechado.";
+}
+
 async function getOrCreateOpenAccount(client,tableNumber){
+  // Serializa a criação da comanda por mesa para evitar duas comandas abertas
+  // quando dois pedidos chegam praticamente ao mesmo tempo.
+  await client.query("select pg_advisory_xact_lock($1)",[tableNumber]);
+
+  const tableExists=await client.query(
+    "select 1 from tables_restaurant where number=$1 limit 1",
+    [tableNumber]
+  );
+  if(!tableExists.rowCount)throw Error("Mesa não cadastrada.");
+
   let r=await client.query(
     `select * from table_accounts
-     where table_number=$1 and status='Aberta'
+     where table_number=$1 and status='Aberta' and account_type='Mesa'
      order by id desc limit 1
      for update`,
     [tableNumber]
   );
-  if(r.rowCount)return r.rows[0];
+  if(r.rowCount){
+    const existing=r.rows[0];
+    if(isStaleTableAccount(existing))throw Error(staleTableAccountMessage());
+    return existing;
+  }
 
   r=await client.query(
-    `insert into table_accounts(table_number,status)
-     values($1,'Aberta')
+    `insert into table_accounts(table_number,status,account_type,customer_name)
+     values($1,'Aberta','Mesa','')
      returning *`,
     [tableNumber]
   );
   return r.rows[0];
 }
 
+const adminLoginAttempts=new Map();
+function adminLoginKey(req){
+  return String(req.headers["x-forwarded-for"]||req.ip||"unknown").split(",")[0].trim();
+}
+function adminLoginBlocked(req){
+  const key=adminLoginKey(req),now=Date.now();
+  const state=adminLoginAttempts.get(key);
+  if(!state)return {blocked:false,key};
+  if(now-state.first>15*60*1000){adminLoginAttempts.delete(key);return {blocked:false,key};}
+  return {blocked:state.count>=8,key,retry_ms:Math.max(0,15*60*1000-(now-state.first))};
+}
+function recordAdminLoginFailure(key){
+  const now=Date.now(),state=adminLoginAttempts.get(key);
+  if(!state||now-state.first>15*60*1000)adminLoginAttempts.set(key,{count:1,first:now});
+  else {state.count++;adminLoginAttempts.set(key,state);}
+}
+function clearAdminLoginFailures(key){adminLoginAttempts.delete(key);}
+
 app.post("/api/admin/login",(req,res)=>{
-  if(String(req.body.pin||"")!==ADMIN_PIN){
+  const attempt=adminLoginBlocked(req);
+  if(attempt.blocked){
+    res.set("Retry-After",String(Math.ceil(attempt.retry_ms/1000)));
+    return res.status(429).json({error:"Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente."});
+  }
+  const supplied=String(req.body.pin||"");
+  const a=Buffer.from(supplied);
+  const b=Buffer.from(String(ADMIN_PIN));
+  const same=a.length===b.length && crypto.timingSafeEqual(a,b);
+  if(!same){
+    recordAdminLoginFailure(attempt.key);
     return res.status(401).json({error:"Senha incorreta."});
   }
+  clearAdminLoginFailures(attempt.key);
   const token=createAdminToken();
   res.json({ok:true,token,expires_in_hours:ADMIN_SESSION_HOURS});
 });
@@ -364,9 +478,16 @@ app.get("/api/menu",async(req,res)=>{
 app.post("/api/orders",async(req,res)=>{
   const {table,items,observation=""}=req.body;
   const tableNumber=Number(table);
+  const accessToken=String(req.body.access_token||req.body.token||"");
 
   if(!Number.isInteger(tableNumber)||tableNumber<1||!Array.isArray(items)||!items.length){
     return res.status(400).json({error:"Pedido inválido."});
+  }
+  if(items.length>50){
+    return res.status(400).json({error:"Há itens demais neste pedido."});
+  }
+  if(!validTableAccess(tableNumber,accessToken)){
+    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
   }
 
   const c=await pool.connect();
@@ -378,7 +499,11 @@ app.post("/api/orders",async(req,res)=>{
     const normalized=[];
 
     for(const item of items){
-      const quantity=Math.max(1,Math.floor(Number(item.quantity)));
+      const rawQuantity=Number(item.quantity);
+      if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99){
+        throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
+      }
+      const quantity=Math.floor(rawQuantity);
       const r=await c.query(
         "select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",
         [Number(item.product_id)]
@@ -449,7 +574,6 @@ app.get("/api/stock",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar estoque."})}
 });
 
-
 app.put("/api/stock/costs/bulk",requireAdmin,async(req,res)=>{
   const items=Array.isArray(req.body&&req.body.items)?req.body.items:[];
   if(!items.length)return res.status(400).json({error:"Informe pelo menos um produto."});
@@ -481,18 +605,23 @@ app.put("/api/stock/:id",requireAdmin,async(req,res)=>{
   const quantity=Math.max(0,Math.floor(Number(req.body.quantity)||0));
   const control=Boolean(req.body.stock_control);
   const threshold=Math.max(0,Math.floor(Number(req.body.stock_low_threshold) || 0));
-  const costPrice=Math.max(0,Number(req.body.cost_price)||0);
+  const requestedCost=Number(req.body.cost_price);
+  const hasCost=Number.isFinite(requestedCost)&&requestedCost>=0;
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const cur=await c.query("select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(req.params.id)]);
+    const cur=await c.query("select id,name,stock_quantity,stock_control,cost_price from products where id=$1 and active=true for update",[Number(req.params.id)]);
     if(!cur.rowCount){await c.query("rollback");return res.status(404).json({error:"Produto não encontrado."});}
     const previous=Number(cur.rows[0].stock_quantity||0);
-    const r=await c.query("update products set stock_quantity=$1,stock_control=$2,stock_low_threshold=$3,cost_price=$4 where id=$5 returning id,name,price,cost_price,stock_quantity,stock_control,stock_low_threshold",[quantity,control,threshold,costPrice,Number(req.params.id)]);
-    if(previous!==quantity){
-      await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-        values($1,'Ajuste manual',$2,$3,$4,'Correção manual de estoque')`,
-        [Number(req.params.id),Math.abs(quantity-previous),previous,quantity]);
+    const previousCost=Number(cur.rows[0].cost_price||0);
+    const nextCost=hasCost?requestedCost:previousCost;
+    const r=await c.query("update products set stock_quantity=$1,stock_control=$2,stock_low_threshold=$3,cost_price=$4 where id=$5 returning id,name,stock_quantity,stock_control,stock_low_threshold,cost_price",[quantity,control,threshold,nextCost,Number(req.params.id)]);
+    if(previous!==quantity || Math.abs(previousCost-nextCost)>0.0001){
+      const movementType=previous!==quantity?'Ajuste manual':'Ajuste de custo';
+      const note=previous!==quantity?'Correção manual de estoque':'Atualização manual do custo unitário';
+      await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note,previous_cost,new_cost)
+        values($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [Number(req.params.id),movementType,Math.abs(quantity-previous),previous,quantity,note,previousCost,nextCost]);
     }
     await c.query("commit");
     res.json(r.rows[0]);
@@ -504,7 +633,7 @@ app.get("/api/stock/history",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
       select sm.id,sm.product_id,p.name product_name,p.emoji,sm.movement_type,sm.quantity,
-             sm.previous_quantity,sm.new_quantity,sm.note,sm.created_at
+             sm.previous_quantity,sm.new_quantity,sm.previous_cost,sm.new_cost,sm.entry_unit_cost,sm.note,sm.created_at
       from stock_movements sm
       left join products p on p.id=sm.product_id
       order by sm.created_at desc,sm.id desc
@@ -518,13 +647,16 @@ app.get("/api/stock/history",requireAdmin,async(req,res)=>{
 app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
   const quantity=Math.floor(Number(req.body.quantity)||0);
   const note=String(req.body.note||"").trim();
+  const rawEntryCost=req.body.unit_cost;
+  const entryCost=rawEntryCost===""||rawEntryCost===null||rawEntryCost===undefined?null:Number(rawEntryCost);
   if(quantity<=0)return res.status(400).json({error:"Informe uma quantidade de entrada maior que zero."});
+  if(entryCost!==null&&(!Number.isFinite(entryCost)||entryCost<0))return res.status(400).json({error:"Informe um custo unitário válido."});
 
   const c=await pool.connect();
   try{
     await c.query("begin");
     const r=await c.query(
-      "select id,name,stock_quantity,stock_control from products where id=$1 and active=true for update",
+      "select id,name,stock_quantity,stock_control,cost_price from products where id=$1 and active=true for update",
       [Number(req.params.id)]
     );
     if(!r.rowCount){
@@ -534,21 +666,27 @@ app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
 
     const p=r.rows[0];
     const previous=Number(p.stock_quantity||0);
+    const previousCost=Number(p.cost_price||0);
     const next=previous+quantity;
+    let nextCost=previousCost;
+    if(entryCost!==null){
+      nextCost=next>0?((previous*previousCost)+(quantity*entryCost))/next:entryCost;
+      nextCost=Math.round(nextCost*100)/100;
+    }
 
     await c.query(
-      "update products set stock_quantity=$1,stock_control=true where id=$2",
-      [next,p.id]
+      "update products set stock_quantity=$1,stock_control=true,cost_price=$2 where id=$3",
+      [next,nextCost,p.id]
     );
 
     await c.query(
-      `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-       values($1,'Entrada',$2,$3,$4,$5)`,
-      [p.id,quantity,previous,next,note]
+      `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note,previous_cost,new_cost,entry_unit_cost)
+       values($1,'Entrada',$2,$3,$4,$5,$6,$7,$8)`,
+      [p.id,quantity,previous,next,note,previousCost,nextCost,entryCost]
     );
 
     await c.query("commit");
-    res.json({ok:true,id:p.id,name:p.name,previous_quantity:previous,entry_quantity:quantity,stock_quantity:next,stock_control:true});
+    res.json({ok:true,id:p.id,name:p.name,previous_quantity:previous,entry_quantity:quantity,stock_quantity:next,stock_control:true,previous_cost:previousCost,entry_unit_cost:entryCost,cost_price:nextCost});
   }catch(e){
     await c.query("rollback");
     console.error(e);
@@ -558,6 +696,7 @@ app.post("/api/stock/:id/entry",requireAdmin,async(req,res)=>{
   }
 });
 
+
 app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
   try{
     res.json((await pool.query("select id,name from categories order by id")).rows);
@@ -566,7 +705,22 @@ app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
 
 app.get("/api/orders",requireAdmin,async(req,res)=>{
   try{
-    const orders=(await pool.query("select * from orders order by id desc")).rows;
+    const orders=(await pool.query(`
+      select o.*,
+             a.status as account_status,
+             a.payment_method as account_payment_method,
+             a.closed_at as account_closed_at,
+             a.account_type as account_type,
+             a.customer_name as customer_name,
+             exists(
+               select 1 from pix_payments pp
+               where pp.account_id=o.account_id
+                 and lower(pp.status) in ('paid','processed','approved')
+             ) as pix_verified
+      from orders o
+      left join table_accounts a on a.id=o.account_id
+      order by o.id desc
+    `)).rows;
     for(const o of orders){
       o.items=(await pool.query(
         `select product_name name,quantity,unit_price
@@ -578,6 +732,23 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar pedidos."})}
 });
 
+
+
+app.post("/api/admin/orders/cleanup-old-48h",requireAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(`
+      update orders
+      set status='Entregue'
+      where status in ('Recebido','Em preparo','Pronto')
+        and created_at <= now() - interval '48 hours'
+      returning id
+    `);
+    res.json({ok:true,updated:r.rowCount,ids:r.rows.map(x=>x.id)});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao limpar pedidos com 48 horas ou mais."});
+  }
+});
 
 app.post("/api/admin/orders/cleanup-closed",requireAdmin,async(req,res)=>{
   try{
@@ -643,8 +814,9 @@ app.get("/api/client/account/:table",async(req,res)=>{
     if(!Number.isInteger(tableNumber)||!validTableAccess(tableNumber,req.query.t)){
       return res.status(403).json({error:"Acesso inválido à comanda."});
     }
-    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,[tableNumber])).rows[0];
+    const account=(await pool.query(`select * from table_accounts where table_number=$1 and status='Aberta' and account_type='Mesa' order by id desc limit 1`,[tableNumber])).rows[0];
     if(!account)return res.json({open:false,table_number:tableNumber,orders:[],total:0});
+    if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
     const orders=(await pool.query(`select id,status,observation,total,created_at from orders where account_id=$1 order by id`,[account.id])).rows;
     let total=0;
     for(const o of orders){
@@ -668,12 +840,18 @@ app.post("/api/client/pix",async(req,res)=>{
   }
 
   try{
+    const cashSession=await getOpenCashSession(pool);
+    if(!cashSession){
+      return res.status(409).json({error:noOpenCashMessage(),cash_closed:true});
+    }
+
     const account=(await pool.query(
       `select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,
       [tableNumber]
     )).rows[0];
 
     if(!account)return res.status(404).json({error:"Não há comanda aberta nesta mesa."});
+    if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
 
     const comandaTotal=Number((await pool.query(
       `select coalesce(sum(total),0)::numeric total
@@ -763,6 +941,21 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
       return res.status(404).json({error:"Pagamento não encontrado."});
     }
 
+    // Se o PIX já foi conciliado localmente, responde imediatamente sem
+    // consultar novamente o Mercado Pago. Isso deixa a verificação automática
+    // rápida e mantém a rota idempotente.
+    const localAccount=(await pool.query(
+      `select status,payment_method,closed_at from table_accounts where id=$1`,
+      [p.account_id]
+    )).rows[0];
+    if(String(p.status||"").toLowerCase()==="paid" && localAccount?.status==="Fechada"){
+      return res.json({
+        ok:true,paid:true,status:"paid",account_closed:true,
+        payment_method:localAccount.payment_method||"PIX",
+        closed_at:localAccount.closed_at||null,reconciled:{closed:0}
+      });
+    }
+
     const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
     const payment=data?.transactions?.payments?.[0]||{};
     const rawStatus=String(payment.status||data.status||"");
@@ -776,7 +969,14 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
       return res.json({ok:true,paid:false,status:rawStatus||"pending",account_closed:false});
     }
 
+    // Marca o pagamento local como pago antes da reconciliação.
+    await pool.query(
+      `update pix_payments set status='paid',updated_at=now() where id=$1`,
+      [p.id]
+    );
+
     // Fecha exatamente a comanda vinculada a este pagamento já confirmado.
+    // A rotina é idempotente: uma comanda já fechada não é fechada novamente.
     const result=await reconcilePaidPixAccounts();
 
     const account=(await pool.query(
@@ -813,7 +1013,7 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
       select
-        a.id,a.table_number,a.status,a.payment_method,a.opened_at,a.closed_at,
+        a.id,a.table_number,a.account_type,a.customer_name,a.status,a.payment_method,a.opened_at,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
         count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
@@ -869,16 +1069,174 @@ app.get("/api/accounts/table/:table",requireAdmin,async(req,res)=>{
   }
 });
 
+
+app.get("/api/accounts/:id",requireAdmin,async(req,res)=>{
+  try{
+    const id=Number(req.params.id);
+    const account=(await pool.query(`select * from table_accounts where id=$1`,[id])).rows[0];
+    if(!account)return res.status(404).json({error:"Comanda não encontrada."});
+    const orders=(await pool.query(`select * from orders where account_id=$1 order by id`,[id])).rows;
+    let total=0;
+    for(const o of orders){
+      o.items=(await pool.query(`select product_name name,quantity,unit_price from order_items where order_id=$1 order by id`,[o.id])).rows;
+      if(o.status!=="Cancelado")total+=Number(o.total);
+    }
+    res.json({open:account.status==="Aberta",account,orders,total});
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar comanda."})}
+});
+
+app.post("/api/accounts/avulsa",requireAdmin,async(req,res)=>{
+  const name=String(req.body.customer_name||"").trim();
+  if(!name)return res.status(400).json({error:"Digite o nome ou identificação da comanda."});
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const seq=(await c.query(`select nextval(pg_get_serial_sequence('table_accounts','id'))::int id`)).rows[0].id;
+    const account=(await c.query(`
+      insert into table_accounts(id,table_number,account_type,customer_name,status)
+      values($1,$2,'Avulsa',$3,'Aberta') returning *
+    `,[seq,-seq,name])).rows[0];
+    await c.query("commit");
+    res.json({ok:true,account});
+  }catch(e){try{await c.query("rollback")}catch(_e){};console.error(e);res.status(500).json({error:"Erro ao criar comanda avulsa."})}
+  finally{c.release()}
+});
+
+app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
+  const items=Array.isArray(req.body.items)?req.body.items:[];
+  const observation=String(req.body.observation||"");
+  if(!items.length)return res.status(400).json({error:"Adicione pelo menos um produto."});
+  if(items.length>50)return res.status(400).json({error:"Há itens demais neste pedido."});
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const account=(await c.query(`select * from table_accounts where id=$1 and status='Aberta' for update`,[Number(req.params.id)])).rows[0];
+    if(!account)throw Error("Comanda aberta não encontrada.");
+    let total=0; const normalized=[];
+    for(const item of items){
+      const rawQuantity=Number(item.quantity||1);
+      if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99)throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
+      const quantity=Math.floor(rawQuantity);
+      const r=await c.query("select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(item.product_id)]);
+      if(!r.rowCount)throw Error("Produto inválido.");
+      const p=r.rows[0],price=Number(p.price),cost=Number(p.cost_price||0);
+      if(p.stock_control&&Number(p.stock_quantity)<quantity)throw Error(`Estoque insuficiente para ${p.name}. Disponível: ${p.stock_quantity}`);
+      total+=price*quantity; normalized.push({p,quantity,price,cost});
+    }
+    const order=(await c.query(`insert into orders(account_id,table_number,status,observation,total) values($1,$2,'Recebido',$3,$4) returning id`,[account.id,account.table_number,observation,total])).rows[0];
+    for(const x of normalized){
+      await c.query(`insert into order_items(order_id,product_id,product_name,quantity,unit_price,unit_cost) values($1,$2,$3,$4,$5,$6)`,[order.id,x.p.id,x.p.name,x.quantity,x.price,x.cost]);
+      if(x.p.stock_control){
+        const previous=Number(x.p.stock_quantity||0),next=previous-x.quantity;
+        await c.query("update products set stock_quantity=$1 where id=$2",[next,x.p.id]);
+        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note) values($1,'Venda',$2,$3,$4,$5)`,[x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
+      }
+    }
+    await c.query("commit");res.json({ok:true,id:order.id,total});
+  }catch(e){try{await c.query("rollback")}catch(_e){};console.error(e);res.status(400).json({error:e.message||"Erro ao lançar pedido."})}
+  finally{c.release()}
+});
+
+app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+
+    const account=(await c.query(
+      `select * from table_accounts where id=$1 and status='Aberta' for update`,
+      [Number(req.params.id)]
+    )).rows[0];
+
+    if(!account){
+      await c.query("rollback");
+      return res.status(404).json({error:"Comanda aberta não encontrada."});
+    }
+
+    const pixRows=(await c.query(
+      `select id,status from pix_payments
+       where account_id=$1
+       order by id desc
+       for update`,
+      [account.id]
+    )).rows;
+
+    const paidPix=pixRows.find(p=>["paid","processed","approved"].includes(String(p.status||"").toLowerCase()));
+    if(paidPix){
+      await c.query("rollback");
+      return res.status(400).json({
+        error:"Esta comanda possui um PIX já pago/aprovado. O cancelamento foi bloqueado por segurança."
+      });
+    }
+
+    const pendingPix=pixRows.filter(p=>
+      ["pending","action_required","processing"].includes(String(p.status||"").toLowerCase())
+    );
+
+    if(pendingPix.length){
+      await c.query(
+        `update pix_payments
+         set status='cancelled',updated_at=now()
+         where account_id=$1
+           and lower(status) in ('pending','action_required','processing')`,
+        [account.id]
+      );
+    }
+
+    const orders=(await c.query(
+      `select id from orders where account_id=$1 and status<>'Cancelado' order by id for update`,
+      [account.id]
+    )).rows;
+
+    for(const o of orders){
+      const items=(await c.query(`
+        select p.id,p.stock_quantity,oi.quantity
+        from order_items oi
+        join products p on p.id=oi.product_id
+        where oi.order_id=$1 and p.stock_control=true
+        for update
+      `,[o.id])).rows;
+
+      for(const x of items){
+        const previous=Number(x.stock_quantity||0);
+        const q=Number(x.quantity||0);
+        const updated=previous+q;
+        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
+        await c.query(`
+          insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+          values($1,'Cancelamento',$2,$3,$4,$5)
+        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
+      }
+      await c.query("update orders set status='Cancelado' where id=$1",[o.id]);
+    }
+
+    await c.query(`
+      update table_accounts
+      set status='Cancelada',payment_method=null,closed_at=now()
+      where id=$1
+    `,[account.id]);
+
+    await c.query("commit");
+    res.json({ok:true,account_id:account.id,table_number:account.table_number,cancelled_orders:orders.length,payment_method:null});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(500).json({error:e.message||"Erro ao cancelar a comanda."});
+  }finally{
+    c.release();
+  }
+});
+
+
 app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
-  const allowed=["PIX","Dinheiro","Cartão"];
   const payment=String(req.body.payment_method||"");
-  if(!allowed.includes(payment)){
-    return res.status(400).json({error:"Forma de pagamento inválida."});
+  if(payment!=="PIX"){
+    return res.status(400).json({error:"Este sistema aceita fechamento somente em PIX."});
   }
 
   const c=await pool.connect();
   try{
     await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
 
     const account=(await c.query(
       `select * from table_accounts
@@ -890,6 +1248,12 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
     if(!account){
       await c.query("rollback");
       return res.status(404).json({error:"Comanda aberta não encontrada."});
+    }
+
+    const cashSession=await getOpenCashSession(c);
+    if(!cashSession){
+      await c.query("rollback");
+      return res.status(409).json({error:noOpenCashMessage(),cash_closed:true});
     }
 
     const total=Number((await c.query(`
@@ -917,15 +1281,17 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
 
 app.post("/api/products",requireAdmin,async(req,res)=>{
   const x=req.body;
-  if(!x.name||!Number(x.price)||!Number(x.category_id)){
-    return res.status(400).json({error:"Preencha nome, preço e categoria."});
+  const name=String(x.name||"").trim();
+  const price=Number(x.price),categoryId=Number(x.category_id);
+  if(!name||name.length>120||!Number.isFinite(price)||price<=0||!Number.isInteger(categoryId)||categoryId<1){
+    return res.status(400).json({error:"Preencha nome, preço positivo e categoria válida."});
   }
   try{
     const r=await pool.query(
-      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price,stock_low_threshold)
-       values($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10) returning id`,
-      [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Math.max(0,Math.floor(Number(x.stock_low_threshold)||0))]
+      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price)
+       values($1,$2,$3,$4,$5,$6,true,$7,$8,$9) returning id`,
+      [name,String(x.description||"").slice(0,500),price,categoryId,
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0)]
     );
     res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:"Erro ao cadastrar produto."})}
@@ -933,11 +1299,16 @@ app.post("/api/products",requireAdmin,async(req,res)=>{
 
 app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   const x=req.body;
+  const name=String(x.name||"").trim();
+  const price=Number(x.price),categoryId=Number(x.category_id);
+  if(!name||name.length>120||!Number.isFinite(price)||price<=0||!Number.isInteger(categoryId)||categoryId<1){
+    return res.status(400).json({error:"Preencha nome, preço positivo e categoria válida."});
+  }
   try{
     await pool.query(
-      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9,stock_low_threshold=$10 where id=$11`,
-      [String(x.name),String(x.description||""),Number(x.price),Number(x.category_id),
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Math.max(0,Math.floor(Number(x.stock_low_threshold)||0)),Number(req.params.id)]
+      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9 where id=$10`,
+      [name,String(x.description||"").slice(0,500),price,categoryId,
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Number(req.params.id)]
     );
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
@@ -981,6 +1352,11 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
   try{
     const tableNumber=Number(req.params.table);
+    if(!Number.isInteger(tableNumber)||tableNumber<1){
+      return res.status(400).json({error:"Mesa inválida."});
+    }
+    const exists=(await pool.query("select 1 from tables_restaurant where number=$1 limit 1",[tableNumber])).rowCount;
+    if(!exists)return res.status(404).json({error:"Mesa não cadastrada."});
     const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(tableNumber)}&t=${tableAccessToken(tableNumber)}`;
     const png=await QRCode.toDataURL(url,{width:700,margin:2});
     res.json({url,png});
@@ -1015,26 +1391,50 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
       select * from cash_sessions where status='Aberto' order by id desc limit 1
     `)).rows[0]||null;
 
-    let summary={pix:0,dinheiro:0,cartao:0,sales_total:0,count:0};
+    let summary={pix:0,sales_total:0,count:0,mercado_pago_pix:0,manual_pix:0};
+    let receipts=[];
     if(session){
-      const r=(await pool.query(`
+      receipts=(await pool.query(`
         select
-          coalesce(sum(x.total) filter(where x.payment_method='PIX'),0)::numeric pix,
-          coalesce(sum(x.total) filter(where x.payment_method='Dinheiro'),0)::numeric dinheiro,
-          coalesce(sum(x.total) filter(where x.payment_method='Cartão'),0)::numeric cartao,
-          coalesce(sum(x.total),0)::numeric sales_total,
-          count(*)::int count
-        from (
-          select a.id,a.payment_method,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
-          from table_accounts a
-          left join orders o on o.account_id=a.id
-          where a.status='Fechada' and a.closed_at>= $1
-          group by a.id
-        ) x
-      `,[session.opened_at])).rows[0];
-      summary={pix:Number(r.pix),dinheiro:Number(r.dinheiro),cartao:Number(r.cartao),sales_total:Number(r.sales_total),count:r.count};
+          a.id,
+          a.table_number,
+          a.account_type,
+          a.customer_name,
+          a.closed_at,
+          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+          count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+          exists(
+            select 1 from pix_payments pp
+            where pp.account_id=a.id
+              and lower(pp.status) in ('paid','processed','approved')
+          ) as mercado_pago_verified
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and a.payment_method='PIX'
+          and a.closed_at>= $1
+        group by a.id
+        order by a.closed_at desc,a.id desc
+      `,[session.opened_at])).rows.map(x=>({
+        ...x,
+        total:Number(x.total),
+        order_count:Number(x.order_count||0),
+        payment_source:x.mercado_pago_verified?'Mercado Pago':'PIX manual'
+      }));
+
+      const mercadoPagoPix=receipts.filter(x=>x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+      const manualPix=receipts.filter(x=>!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+      const total=mercadoPagoPix+manualPix;
+      summary={
+        pix:total,
+        sales_total:total,
+        count:receipts.length,
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix
+      };
     }
-    res.json({session,summary});
+    const openAccounts=await getOpenAccountsSummary(pool);
+    res.json({session,summary,receipts,open_accounts:openAccounts});
   }catch(e){
     console.error(e);
     res.status(500).json({error:"Erro ao carregar caixa."});
@@ -1042,47 +1442,79 @@ app.get("/api/cash",requireAdmin,async(req,res)=>{
 });
 
 app.post("/api/cash/open",requireAdmin,async(req,res)=>{
-  const opening=Number(req.body.opening_amount||0);
-  if(!Number.isFinite(opening)||opening<0)return res.status(400).json({error:"Valor inicial inválido."});
-  try{
-    const exists=(await pool.query("select id from cash_sessions where status='Aberto' limit 1")).rowCount;
-    if(exists)return res.status(400).json({error:"Já existe um caixa aberto."});
-    const row=(await pool.query(`
-      insert into cash_sessions(opening_amount,status) values($1,'Aberto') returning *
-    `,[opening])).rows[0];
-    res.json({ok:true,session:row});
-  }catch(e){
-    console.error(e);
-    res.status(500).json({error:"Erro ao abrir caixa."});
-  }
-});
-
-app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
-  const closing=Number(req.body.closing_amount);
-  if(!Number.isFinite(closing)||closing<0)return res.status(400).json({error:"Informe o valor contado no caixa."});
+  const opening=0;
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const session=(await c.query(`select * from cash_sessions where id=$1 and status='Aberto' for update`,[Number(req.params.id)])).rows[0];
-    if(!session){await c.query("rollback");return res.status(404).json({error:"Caixa aberto não encontrado."});}
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+    const exists=(await c.query("select id from cash_sessions where status='Aberto' limit 1 for update")).rowCount;
+    if(exists){
+      await c.query("rollback");
+      return res.status(409).json({error:"Já existe um caixa aberto."});
+    }
+    const row=(await c.query(`
+      insert into cash_sessions(opening_amount,status) values($1,'Aberto') returning *
+    `,[opening])).rows[0];
+    await c.query("commit");
+    res.json({ok:true,session:row});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(500).json({error:"Erro ao abrir caixa."});
+  }finally{c.release()}
+});
+
+app.post("/api/cash/:id/close",requireAdmin,async(req,res)=>{
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+    const session=(await c.query(
+      `select * from cash_sessions where id=$1 and status='Aberto' for update`,
+      [Number(req.params.id)]
+    )).rows[0];
+    if(!session){
+      await c.query("rollback");
+      return res.status(404).json({error:"Caixa aberto não encontrado."});
+    }
+
+    const openAccounts=await getOpenAccountsSummary(c);
+    if(openAccounts.count>0){
+      await c.query("rollback");
+      return res.status(409).json({
+        error:`Não é possível fechar o caixa. Existem ${openAccounts.count} comanda(s) aberta(s), totalizando R$ ${openAccounts.total.toFixed(2).replace('.',',')}. Feche ou cancele as comandas antes de encerrar o caixa.`,
+        open_accounts:openAccounts
+      });
+    }
+
+    // O servidor é a fonte de verdade do fechamento: soma somente contas PIX
+    // realmente fechadas durante esta sessão. O navegador não informa o total.
     const r=(await c.query(`
       select coalesce(sum(x.total),0)::numeric total
       from (
-        select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
-        from table_accounts a left join orders o on o.account_id=a.id
-        where a.status='Fechada' and a.closed_at>= $1 and a.payment_method='Dinheiro'
+        select a.id,
+               coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+          and a.payment_method='PIX'
+          and a.closed_at>= $1
         group by a.id
       ) x
     `,[session.opened_at])).rows[0];
-    const expected=Number(session.opening_amount)+Number(r.total);
+
+    const received=Number(r.total);
     const row=(await c.query(`
-      update cash_sessions set status='Fechado',closed_at=now(),closing_amount=$1,expected_amount=$2,notes=$3
-      where id=$4 returning *
-    `,[closing,expected,String(req.body.notes||""),session.id])).rows[0];
+      update cash_sessions
+      set status='Fechado',closed_at=now(),closing_amount=$1,expected_amount=$1,notes=$2
+      where id=$3
+      returning *
+    `,[received,String(req.body.notes||req.body.note||""),session.id])).rows[0];
+
     await c.query("commit");
-    res.json({ok:true,session:row,difference:closing-expected});
+    res.json({ok:true,session:row,total_received:received,difference:0});
   }catch(e){
-    await c.query("rollback");
+    try{await c.query("rollback")}catch(_e){}
     console.error(e);
     res.status(500).json({error:"Erro ao fechar caixa."});
   }finally{c.release()}
@@ -1092,6 +1524,64 @@ app.get("/api/cash/history",requireAdmin,async(req,res)=>{
   try{
     res.json((await pool.query("select * from cash_sessions order by id desc limit 100")).rows);
   }catch(e){res.status(500).json({error:"Erro ao carregar histórico do caixa."})}
+});
+
+app.get("/api/cash/:id/details",requireAdmin,async(req,res)=>{
+  try{
+    const session=(await pool.query(
+      `select * from cash_sessions where id=$1 limit 1`,
+      [Number(req.params.id)]
+    )).rows[0];
+    if(!session)return res.status(404).json({error:"Caixa não encontrado."});
+
+    const end=session.closed_at||new Date();
+    const receipts=(await pool.query(`
+      select
+        a.id,
+        a.table_number,
+        a.account_type,
+        a.customer_name,
+        a.closed_at,
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+        count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Fechada'
+        and a.payment_method='PIX'
+        and a.closed_at >= $1
+        and a.closed_at <= $2
+      group by a.id
+      order by a.closed_at asc,a.id asc
+    `,[session.opened_at,end])).rows.map(x=>({
+      ...x,
+      total:Number(x.total),
+      order_count:Number(x.order_count||0),
+      payment_source:x.mercado_pago_verified?'Mercado Pago':'PIX manual'
+    }));
+
+    const mercadoPagoPix=receipts.filter(x=>x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const manualPix=receipts.filter(x=>!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const total=mercadoPagoPix+manualPix;
+    res.json({
+      session,
+      summary:{
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
+        pix:total,
+        sales_total:total,
+        count:receipts.length
+      },
+      receipts
+    });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao carregar detalhes do caixa."});
+  }
 });
 
 app.get("/api/stats",requireAdmin,async(req,res)=>{
@@ -1139,7 +1629,6 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
 
 
 
-// Regras persistentes do Painel de lucro (compartilhadas entre aparelhos)
 app.get("/api/profit-rules",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`select normalized_name,display_name,alias_product_id,historical_unit_cost,ignored,updated_at from profit_historical_rules order by display_name`)).rows;
@@ -1194,7 +1683,12 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         a.id,
         a.payment_method,
         a.closed_at,
-        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric as total
+        coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric as total,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
       from table_accounts a
       left join orders o on o.account_id=a.id
       where a.status='Fechada'
@@ -1204,11 +1698,15 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       order by a.closed_at
     `,[start,end])).rows;
 
-    let pix=0,dinheiro=0,cartao=0,total=0;
+    let pix=0,dinheiro=0,cartao=0,total=0,mercadoPagoPix=0,manualPix=0;
     for(const a of accounts){
       const value=Number(a.total);
       total+=value;
-      if(a.payment_method==="PIX")pix+=value;
+      if(a.payment_method==="PIX"){
+        pix+=value;
+        if(a.mercado_pago_verified)mercadoPagoPix+=value;
+        else manualPix+=value;
+      }
       else if(a.payment_method==="Dinheiro")dinheiro+=value;
       else if(a.payment_method==="Cartão")cartao+=value;
     }
@@ -1263,6 +1761,8 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       summary:{
         total,
         pix,
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
         dinheiro,
         cartao,
         contas,
@@ -1308,7 +1808,12 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
     const accounts=(await pool.query(`
       select a.id,a.table_number,a.payment_method,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
-        count(o.id) filter(where o.status<>'Cancelado')::int order_count
+        count(o.id) filter(where o.status<>'Cancelado')::int order_count,
+        exists(
+          select 1 from pix_payments pp
+          where pp.account_id=a.id
+            and lower(pp.status) in ('paid','processed','approved')
+        ) as mercado_pago_verified
       from table_accounts a
       left join orders o on o.account_id=a.id
       where a.status='Fechada'
@@ -1351,18 +1856,34 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
       order by closed_at desc
     `,[date])).rows;
 
+    const normalizedAccounts=accounts.map(x=>({
+      ...x,
+      total:Number(x.total),
+      order_count:Number(x.order_count||0),
+      payment_source:x.payment_method==='PIX'?(x.mercado_pago_verified?'Mercado Pago':'PIX manual'):(x.payment_method||'-')
+    }));
+    const mercadoPagoPix=normalizedAccounts.filter(x=>x.payment_method==='PIX'&&x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const manualPix=normalizedAccounts.filter(x=>x.payment_method==='PIX'&&!x.mercado_pago_verified).reduce((z,x)=>z+Number(x.total||0),0);
+    const itens=products.reduce((z,x)=>z+Number(x.quantity||0),0);
+    const totalValue=Number(summary.total);
+    const contasCount=Number(summary.contas||0);
+
     res.json({
       date,
       summary:{
-        total:Number(summary.total),
+        total:totalValue,
         pix:Number(summary.pix),
+        mercado_pago_pix:mercadoPagoPix,
+        manual_pix:manualPix,
         dinheiro:Number(summary.dinheiro),
         cartao:Number(summary.cartao),
-        contas:summary.contas,
+        contas:contasCount,
+        ticket_medio:contasCount?totalValue/contasCount:0,
+        itens,
         custo:Number(financial.cost),
-        lucro_bruto:Number(summary.total)-Number(financial.cost)
+        lucro_bruto:totalValue-Number(financial.cost)
       },
-      accounts:accounts.map(x=>({...x,total:Number(x.total)})),
+      accounts:normalizedAccounts,
       products:products.map(x=>({...x,total:Number(x.total)})),
       cash
     });
@@ -1381,8 +1902,25 @@ app.get("/health",async(req,res)=>{
   }
 });
 
+let pixAutoReconcileBusy=false;
+function startPixAutoReconcile(){
+  // Segurança adicional: mesmo que o cliente feche a tela do QR Code, o
+  // servidor continua conciliando PIX pendentes em segundo plano.
+  const timer=setInterval(async()=>{
+    if(pixAutoReconcileBusy)return;
+    pixAutoReconcileBusy=true;
+    try{await reconcilePaidPixAccounts()}
+    catch(e){console.error("Conciliação automática PIX:",e.message||e)}
+    finally{pixAutoReconcileBusy=false}
+  },20000);
+  if(typeof timer.unref==="function")timer.unref();
+}
+
 init()
-  .then(()=>app.listen(PORT,()=>console.log("Cantinho dos Gigantes rodando na porta "+PORT)))
+  .then(()=>app.listen(PORT,()=>{
+    console.log("Cantinho dos Gigantes rodando na porta "+PORT);
+    startPixAutoReconcile();
+  }))
   .catch(e=>{
     console.error("Erro na inicialização:",e);
     process.exit(1);
