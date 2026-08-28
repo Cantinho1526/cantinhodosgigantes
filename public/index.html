@@ -1503,19 +1503,21 @@ async function profitPanel(start,end){
     const now=todayLocal();
     const first=start||now.slice(0,8)+"01";
     const last=end||now;
-    const [r,products]=await Promise.all([
+    const [r,products,rulesRows]=await Promise.all([
       api("/api/reports/period?start="+encodeURIComponent(first)+"&end="+encodeURIComponent(last)),
-      api("/api/admin/products")
+      api("/api/admin/products"),
+      api("/api/profit-rules")
     ]);
-    window.__profitPanel={report:r,products,start:first,end:last};
+    const rules=Object.fromEntries((rulesRows||[]).map(x=>[x.normalized_name,x]));
+    window.__profitPanel={report:r,products,rules,start:first,end:last};
 
     const total=Number(r.summary.total||0);
     const historicalCost=Number(r.summary.custo||0);
     const normName=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
     const productMap=new Map(products.map(p=>[normName(p.name),p]));
-    const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
-    const historicalCosts=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
-    const ignoredHistorical=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
+    const aliases=Object.fromEntries(Object.entries(rules).filter(([,x])=>x.alias_product_id).map(([k,x])=>[k,x.alias_product_id]));
+    const historicalCosts=Object.fromEntries(Object.entries(rules).filter(([,x])=>Number(x.historical_unit_cost)>0).map(([k,x])=>[k,Number(x.historical_unit_cost)]));
+    const ignoredHistorical=Object.fromEntries(Object.entries(rules).filter(([,x])=>x.ignored).map(([k,x])=>[k,true]));
     const soldAll=(r.products||[]).map(x=>{
       const key=normName(x.name);
       const aliasId=Number(aliases[key]||0);
@@ -1608,56 +1610,50 @@ async function profitPanel(start,end){
 function historicalSaleKey(name){
   return String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
 }
-function ignoreHistoricalSale(name){
-  if(!confirm("Ignorar \""+name+"\" nos cálculos do Painel de lucro?\n\nA venda NÃO será apagada. Ela continuará no histórico, mas deixará de entrar no faturamento, lucro, margem, cobertura de custos e pendências deste painel."))return;
-  const ignored=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
-  ignored[historicalSaleKey(name)]={name:String(name),ignoredAt:new Date().toISOString()};
-  localStorage.setItem("ignoredHistoricalSales",JSON.stringify(ignored));
-  const p=window.__profitPanel; profitPanel(p.start,p.end);
+async function saveProfitRule(name,patch){
+  const p=window.__profitPanel||{};
+  const key=historicalSaleKey(name);
+  const current=(p.rules&&p.rules[key])||{};
+  const body={
+    display_name:String(name),
+    alias_product_id:patch.alias_product_id!==undefined?patch.alias_product_id:(current.alias_product_id||null),
+    historical_unit_cost:patch.historical_unit_cost!==undefined?patch.historical_unit_cost:(current.historical_unit_cost||null),
+    ignored:patch.ignored!==undefined?patch.ignored:Boolean(current.ignored)
+  };
+  await api("/api/profit-rules/"+encodeURIComponent(key),{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
 }
-function restoreHistoricalSale(name){
-  const ignored=JSON.parse(localStorage.getItem("ignoredHistoricalSales")||"{}");
-  delete ignored[historicalSaleKey(name)];
-  localStorage.setItem("ignoredHistoricalSales",JSON.stringify(ignored));
-  const p=window.__profitPanel; profitPanel(p.start,p.end);
+async function ignoreHistoricalSale(name){
+  if(!confirm("Ignorar \""+name+"\" nos cálculos do Painel de lucro?\n\nA venda NÃO será apagada. Ela continuará no histórico, mas deixará de entrar no faturamento, lucro, margem, cobertura de custos e pendências deste painel."))return;
+  try{await saveProfitRule(name,{ignored:true});const p=window.__profitPanel;profitPanel(p.start,p.end)}catch(e){alert(e.message)}
+}
+async function restoreHistoricalSale(name){
+  try{await saveProfitRule(name,{ignored:false});const p=window.__profitPanel;profitPanel(p.start,p.end)}catch(e){alert(e.message)}
 }
 
 function historicalMatchForm(name){
   const p=window.__profitPanel;
   const products=(p&&p.products)||[];
-  const key=String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-  const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
-  const current=Number(aliases[key]||0);
+  const key=historicalSaleKey(name);
+  const current=Number((p.rules&&p.rules[key]&&p.rules[key].alias_product_id)||0);
   const opts=products.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),"pt-BR")).map(x=>'<option value="'+x.id+'" '+(Number(x.id)===current?'selected':'')+'>'+E(x.name)+(Number(x.cost_price||0)>0?' • custo '+R(x.cost_price):' • sem custo')+'</option>').join("");
-  modal('<h2>🔗 Associar venda histórica</h2><div class="notice">Nome registrado na venda: <b>'+E(name)+'</b></div><div class="field"><label>Produto atual correspondente</label><select id="historicalAliasProduct"><option value="">Selecione...</option>'+opts+'</select></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">A associação não altera o nome da venda antiga nem recria pedidos. Ela apenas informa ao Painel de lucro qual produto atual corresponde a esse nome histórico e permite usar seu custo cadastrado.</div><button class="btn" onclick="saveHistoricalMatch('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar associação</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+  modal('<h2>🔗 Associar venda histórica</h2><div class="notice">Nome registrado na venda: <b>'+E(name)+'</b></div><div class="field"><label>Produto atual correspondente</label><select id="historicalAliasProduct"><option value="">Selecione...</option>'+opts+'</select></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">A associação fica salva no banco de dados e vale em todos os aparelhos.</div><button class="btn" onclick="saveHistoricalMatch('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar associação</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
 }
-function saveHistoricalMatch(name){
+async function saveHistoricalMatch(name){
   const id=Number($("historicalAliasProduct").value||0);
   if(!id){alert("Selecione o produto atual correspondente.");return}
-  const key=String(name||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-  const aliases=JSON.parse(localStorage.getItem("historicalProductAliases")||"{}");
-  aliases[key]=id;
-  localStorage.setItem("historicalProductAliases",JSON.stringify(aliases));
-  closeModal();
-  const p=window.__profitPanel; profitPanel(p.start,p.end);
+  try{await saveProfitRule(name,{alias_product_id:id});closeModal();const p=window.__profitPanel;profitPanel(p.start,p.end)}catch(e){alert(e.message)}
 }
 
 function historicalCostForm(name){
-  const key=String(name||"").trim().toLowerCase();
-  const costs=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
-  const current=Number(costs[key]||0);
-  modal('<h2>🕘 Custo histórico</h2><div class="notice">Produto: <b>'+E(name)+'</b></div><div class="field"><label>Custo unitário histórico (R$)</label><input id="historicalCostInput" inputmode="decimal" value="'+(current>0?current.toFixed(2).replace(".",","):"")+'" placeholder="Ex.: 6,00"></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">Este custo será usado no Painel de lucro para vendas históricas deste produto. O item não será recriado no Cardápio.</div><button class="btn" onclick="saveHistoricalCost('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar custo histórico</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
+  const p=window.__profitPanel||{},key=historicalSaleKey(name);
+  const current=Number((p.rules&&p.rules[key]&&p.rules[key].historical_unit_cost)||0);
+  modal('<h2>🕘 Custo histórico</h2><div class="notice">Produto: <b>'+E(name)+'</b></div><div class="field"><label>Custo unitário histórico (R$)</label><input id="historicalCostInput" inputmode="decimal" value="'+(current>0?current.toFixed(2).replace(".",","):"")+'" placeholder="Ex.: 6,00"></div><div style="color:#aaa;font-size:13px;margin:8px 0 16px">Este custo ficará salvo no banco de dados e será usado no Painel de lucro em todos os aparelhos.</div><button class="btn" onclick="saveHistoricalCost('+JSON.stringify(name).replace(/"/g,"&quot;")+')">✅ Salvar custo histórico</button> <button class="secondary" onclick="closeModal()">Cancelar</button>');
 }
-function saveHistoricalCost(name){
+async function saveHistoricalCost(name){
   const raw=String($("historicalCostInput").value||"").replace(/\./g,"").replace(",",".");
   const value=Number(raw);
   if(!Number.isFinite(value)||value<=0){alert("Informe um custo maior que zero.");return}
-  const key=String(name||"").trim().toLowerCase();
-  const costs=JSON.parse(localStorage.getItem("historicalProductCosts")||"{}");
-  costs[key]=value;
-  localStorage.setItem("historicalProductCosts",JSON.stringify(costs));
-  closeModal();
-  const p=window.__profitPanel; profitPanel(p.start,p.end);
+  try{await saveProfitRule(name,{historical_unit_cost:value});closeModal();const p=window.__profitPanel;profitPanel(p.start,p.end)}catch(e){alert(e.message)}
 }
 
 async function periodReport(start,end){
