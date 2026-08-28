@@ -117,6 +117,11 @@ async function init(){
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_control boolean NOT NULL DEFAULT false;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_low_threshold int NOT NULL DEFAULT 5;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price numeric(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS wine_type text NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS wine_grape text NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS wine_origin text NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS wine_vintage text NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS wine_volume_ml int;
 
     CREATE TABLE IF NOT EXISTS stock_movements(
       id serial primary key,
@@ -194,6 +199,11 @@ async function init(){
     INSERT INTO settings(id,name,welcome)
     VALUES(1,'Cantinho dos Gigantes','Bem-vindo! Faça seu pedido pelo celular.')
     ON CONFLICT(id) DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO categories(name) VALUES('Carta de Vinhos')
+    ON CONFLICT(name) DO NOTHING
   `);
 
   for(let i=1;i<=12;i++){
@@ -1288,10 +1298,11 @@ app.post("/api/products",requireAdmin,async(req,res)=>{
   }
   try{
     const r=await pool.query(
-      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price)
-       values($1,$2,$3,$4,$5,$6,true,$7,$8,$9) returning id`,
+      `insert into products(name,description,price,category_id,emoji,image,active,stock_quantity,stock_control,cost_price,stock_low_threshold,wine_type,wine_grape,wine_origin,wine_vintage,wine_volume_ml)
+       values($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
       [name,String(x.description||"").slice(0,500),price,categoryId,
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0)]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Math.max(0,Math.floor(Number(x.stock_low_threshold)||0)),
+       String(x.wine_type||"").slice(0,80),String(x.wine_grape||"").slice(0,120),String(x.wine_origin||"").slice(0,140),String(x.wine_vintage||"").slice(0,20),Number.isFinite(Number(x.wine_volume_ml))&&Number(x.wine_volume_ml)>0?Math.floor(Number(x.wine_volume_ml)):null]
     );
     res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:"Erro ao cadastrar produto."})}
@@ -1306,9 +1317,10 @@ app.put("/api/products/:id",requireAdmin,async(req,res)=>{
   }
   try{
     await pool.query(
-      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9 where id=$10`,
+      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9,stock_low_threshold=$10,wine_type=$11,wine_grape=$12,wine_origin=$13,wine_vintage=$14,wine_volume_ml=$15 where id=$16`,
       [name,String(x.description||"").slice(0,500),price,categoryId,
-       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Number(req.params.id)]
+       String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Math.max(0,Math.floor(Number(x.stock_low_threshold)||0)),
+       String(x.wine_type||"").slice(0,80),String(x.wine_grape||"").slice(0,120),String(x.wine_origin||"").slice(0,140),String(x.wine_vintage||"").slice(0,20),Number.isFinite(Number(x.wine_volume_ml))&&Number(x.wine_volume_ml)>0?Math.floor(Number(x.wine_volume_ml)):null,Number(req.params.id)]
     );
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
