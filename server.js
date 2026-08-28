@@ -1741,10 +1741,10 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
 
     const financial=(await pool.query(`
       select
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * coalesce(oi.unit_cost,p.cost_price) else 0 end),0)::numeric as known_cost,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity else 0 end),0)::int as missing_items
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) else 0 end),0)::numeric as known_cost,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity else 0 end),0)::int as missing_items
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
@@ -1859,10 +1859,10 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
 
     const financial=(await pool.query(`
       select
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * coalesce(oi.unit_cost,p.cost_price) else 0 end),0)::numeric as known_cost,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
-        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity else 0 end),0)::int as missing_items
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) else 0 end),0)::numeric as known_cost,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
+        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity else 0 end),0)::int as missing_items
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
