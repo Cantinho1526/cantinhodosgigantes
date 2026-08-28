@@ -1765,16 +1765,18 @@ async function periodReport(start,end){
         '</div>'+
         '<div class="reportSummary">'+
           '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
-          '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
-          '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
           '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
           '<div class="reportBox"><small>Ticket médio</small><strong>'+R(r.summary.ticket_medio)+'</strong></div>'+
           '<div class="reportBox"><small>Itens vendidos</small><strong>'+r.summary.itens+'</strong></div>'+
-          '<div class="reportBox"><small>Custo dos produtos vendidos</small><strong>'+R(r.summary.custo||0)+'</strong></div>'+
-          '<div class="reportBox"><small>Lucro bruto</small><strong>'+R(r.summary.lucro_bruto||0)+'</strong></div>'+
-          '<div class="reportBox"><small>Margem de lucro</small><strong>'+((Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0).toFixed(1).replace(".",",")+'%')+'</strong></div>'+
+          '<div class="reportBox"><small>Custo conhecido</small><strong>'+R(r.summary.custo||0)+'</strong></div>'+
+          '<div class="reportBox"><small>Faturamento sem custo</small><strong>'+R(r.summary.faturamento_sem_custo||0)+'</strong></div>'+
+          '<div class="reportBox"><small>'+(Number(r.summary.itens_sem_custo||0)>0?'Lucro parcial conhecido':'Lucro bruto')+'</small><strong>'+R(Number(r.summary.itens_sem_custo||0)>0?r.summary.lucro_bruto_parcial:r.summary.lucro_bruto)+'</strong></div>'+
+          '<div class="reportBox"><small>Cobertura de custos</small><strong>'+Number(r.summary.cobertura_custos||0).toFixed(1).replace(".",",")+'%</strong></div>'+
         '</div>'+
+        (Number(r.summary.itens_sem_custo||0)>0?'<div class="warn">⚠️ <b>Lucro total não calculado.</b> '+r.summary.itens_sem_custo+' item(ns) vendido(s) estão sem custo cadastrado, somando '+R(r.summary.faturamento_sem_custo)+' do faturamento. O valor exibido é apenas o lucro da parcela com custo conhecido.</div>':'')+
         '<div class="reportSection"><h3>Resumo por dia</h3>'+
           (r.days.length?
             '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Data</th><th>Contas</th><th>Total</th></tr></thead><tbody>'+
@@ -1801,15 +1803,18 @@ function exportPeriodCSV(){
     ["Relatório por período",r.start,r.end],[],
     ["Resumo"],
     ["Total",r.summary.total],
-    ["PIX",r.summary.pix],
-    ["Dinheiro",r.summary.dinheiro],
-    ["Cartão",r.summary.cartao],
+    ["PIX total",r.summary.pix],
+    ["Mercado Pago",r.summary.mercado_pago_pix||0],
+    ["PIX manual",r.summary.manual_pix||0],
     ["Contas",r.summary.contas],
     ["Ticket médio",r.summary.ticket_medio],
     ["Itens vendidos",r.summary.itens],
-    ["Custo dos produtos vendidos",r.summary.custo||0],
-    ["Lucro bruto",r.summary.lucro_bruto||0],
-    ["Margem de lucro (%)",Number(r.summary.total)>0?(Number(r.summary.lucro_bruto||0)/Number(r.summary.total))*100:0],[],
+    ["Custo conhecido",r.summary.custo||0],
+    ["Faturamento sem custo",r.summary.faturamento_sem_custo||0],
+    ["Itens sem custo",r.summary.itens_sem_custo||0],
+    ["Lucro parcial conhecido",r.summary.lucro_bruto_parcial||0],
+    ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],
+    ["Cobertura de custos (%)",r.summary.cobertura_custos||0],[],
     ["Resumo por dia"],
     ["Data","Contas","Total"],
     ...r.days.map(d=>[d.day,d.contas,d.total]),[],
@@ -1847,18 +1852,21 @@ async function dailyReport(date){
         '</div>'+
         '<div class="reportSummary">'+
           '<div class="reportBox"><small>Total</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>PIX</small><strong>'+R(r.summary.pix)+'</strong></div>'+
-          '<div class="reportBox"><small>Dinheiro</small><strong>'+R(r.summary.dinheiro)+'</strong></div>'+
-          '<div class="reportBox"><small>Cartão</small><strong>'+R(r.summary.cartao)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX total</small><strong>'+R(r.summary.pix)+'</strong></div>'+
+          '<div class="reportBox"><small>Mercado Pago</small><strong>'+R(r.summary.mercado_pago_pix||0)+'</strong></div>'+
+          '<div class="reportBox"><small>PIX manual</small><strong>'+R(r.summary.manual_pix||0)+'</strong></div>'+
           '<div class="reportBox"><small>Contas</small><strong>'+r.summary.contas+'</strong></div>'+
           '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
-          '<div class="reportBox"><small>Custo dos produtos vendidos</small><strong>'+R(r.summary.custo)+'</strong></div>'+
-          '<div class="reportBox"><small>Lucro bruto</small><strong>'+R(r.summary.lucro_bruto)+'</strong></div>'+
+          '<div class="reportBox"><small>Custo conhecido</small><strong>'+R(r.summary.custo)+'</strong></div>'+
+          '<div class="reportBox"><small>Faturamento sem custo</small><strong>'+R(r.summary.faturamento_sem_custo||0)+'</strong></div>'+
+          '<div class="reportBox"><small>'+(Number(r.summary.itens_sem_custo||0)>0?'Lucro parcial conhecido':'Lucro bruto')+'</small><strong>'+R(Number(r.summary.itens_sem_custo||0)>0?r.summary.lucro_bruto_parcial:r.summary.lucro_bruto)+'</strong></div>'+
+          '<div class="reportBox"><small>Cobertura de custos</small><strong>'+Number(r.summary.cobertura_custos||0).toFixed(1).replace(".",",")+'%</strong></div>'+
         '</div>'+
+        (Number(r.summary.itens_sem_custo||0)>0?'<div class="warn">⚠️ <b>Lucro total não pode ser calculado com segurança.</b> '+r.summary.itens_sem_custo+' item(ns) vendido(s) estão sem custo cadastrado, somando '+R(r.summary.faturamento_sem_custo)+' do faturamento.</div>':'')+
         '<div class="reportSection"><h3>Contas fechadas</h3>'+
           (r.accounts.length?
             '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
-            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_source||a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
             '</tbody></table></div>'
           :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
         '</div>'+
@@ -1973,16 +1981,19 @@ function exportDailyCSV(){
     ["Relatório diário",r.date],[],
     ["Resumo"],
     ["Total",r.summary.total],
-    ["PIX",r.summary.pix],
-    ["Dinheiro",r.summary.dinheiro],
-    ["Cartão",r.summary.cartao],
+    ["PIX total",r.summary.pix],
+    ["Mercado Pago",r.summary.mercado_pago_pix||0],
+    ["PIX manual",r.summary.manual_pix||0],
     ["Contas",r.summary.contas],
     ["Faturamento",r.summary.total],
-    ["Custo dos produtos vendidos",r.summary.custo],
-    ["Lucro bruto",r.summary.lucro_bruto],[],
+    ["Custo conhecido",r.summary.custo],
+    ["Faturamento sem custo",r.summary.faturamento_sem_custo||0],
+    ["Itens sem custo",r.summary.itens_sem_custo||0],
+    ["Lucro parcial conhecido",r.summary.lucro_bruto_parcial||0],
+    ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],[],
     ["Contas fechadas"],
     ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
-    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_method||"",a.order_count,a.total]),[],
+    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_source||a.payment_method||"",a.order_count,a.total]),[],
     ["Produtos vendidos"],
     ["Produto","Quantidade","Total"],
     ...r.products.map(p=>[p.name,p.quantity,p.total])
