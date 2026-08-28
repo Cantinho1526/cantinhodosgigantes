@@ -1002,7 +1002,7 @@ function renderProductAdminList(){
       '<div class="productActions">'+
         (archived
           ? '<button class="btn" onclick="restoreProduct('+p.id+')">↩️ Restaurar</button>'
-          : '<button class="secondary" onclick="productForm('+p.id+')">Editar</button><button class="danger" onclick="deleteProduct('+p.id+','+JSON.stringify(String(p.name||''))+')">📦 Arquivar</button>')+
+          : '<button class="secondary" onclick="productForm('+p.id+')">Editar</button><button class="danger" onclick="deleteProduct('+p.id+')">📦 Arquivar</button>')+
       '</div>'+ 
     '</div>';
   }).join(""):'<div class="empty" style="padding:28px 12px">🔎 Nenhum produto encontrado com esses filtros.</div>';
@@ -1286,8 +1286,10 @@ async function saveProduct(id){
   }catch(e){alert(e.message)}
 }
 
-async function deleteProduct(id,name){
+async function deleteProduct(id){
   try{
+    const cached=adminProductCache.find(p=>Number(p.id)===Number(id));
+    const name=String(cached?.name||"Produto");
     const d=await api("/api/products/"+id+"/archive-impact");
     const h=d.history||{},o=d.open||{},p=d.product||{};
     const openWarn=Number(o.orders||0)>0
