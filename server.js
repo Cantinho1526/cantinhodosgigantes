@@ -1741,7 +1741,10 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
 
     const financial=(await pool.query(`
       select
-        coalesce(sum(oi.quantity * coalesce(oi.unit_cost,p.cost_price,0)),0)::numeric as cost
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * coalesce(oi.unit_cost,p.cost_price) else 0 end),0)::numeric as known_cost,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity else 0 end),0)::int as missing_items
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
@@ -1780,8 +1783,13 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         contas,
         ticket_medio:contas?total/contas:0,
         itens:items,
-        custo:Number(financial.cost),
-        lucro_bruto:total-Number(financial.cost)
+        custo:Number(financial.known_cost),
+        faturamento_com_custo:Number(financial.known_revenue),
+        faturamento_sem_custo:Number(financial.missing_revenue),
+        itens_sem_custo:Number(financial.missing_items),
+        cobertura_custos:total>0?(Number(financial.known_revenue)/total)*100:100,
+        lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
+        lucro_bruto:Number(financial.missing_items)>0?null:total-Number(financial.known_cost)
       },
       products:products.map(x=>({...x,total:Number(x.total)})),
       days
@@ -1851,7 +1859,10 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
 
     const financial=(await pool.query(`
       select
-        coalesce(sum(oi.quantity * coalesce(oi.unit_cost,p.cost_price,0)),0)::numeric as cost
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * coalesce(oi.unit_cost,p.cost_price) else 0 end),0)::numeric as known_cost,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
+        coalesce(sum(case when coalesce(oi.unit_cost,p.cost_price) is null then oi.quantity else 0 end),0)::int as missing_items
       from order_items oi
       join orders o on o.id=oi.order_id
       join table_accounts a on a.id=o.account_id
@@ -1892,8 +1903,13 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
         contas:contasCount,
         ticket_medio:contasCount?totalValue/contasCount:0,
         itens,
-        custo:Number(financial.cost),
-        lucro_bruto:totalValue-Number(financial.cost)
+        custo:Number(financial.known_cost),
+        faturamento_com_custo:Number(financial.known_revenue),
+        faturamento_sem_custo:Number(financial.missing_revenue),
+        itens_sem_custo:Number(financial.missing_items),
+        cobertura_custos:totalValue>0?(Number(financial.known_revenue)/totalValue)*100:100,
+        lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
+        lucro_bruto:Number(financial.missing_items)>0?null:totalValue-Number(financial.known_cost)
       },
       accounts:normalizedAccounts,
       products:products.map(x=>({...x,total:Number(x.total)})),
