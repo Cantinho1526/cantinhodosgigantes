@@ -161,6 +161,15 @@ async function init(){
 
     CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
     CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
+
+    CREATE TABLE IF NOT EXISTS profit_historical_rules(
+      normalized_name text primary key,
+      display_name text not null,
+      alias_product_id int references products(id),
+      historical_unit_cost numeric(10,2),
+      ignored boolean not null default false,
+      updated_at timestamptz not null default now()
+    );
   `);
 
   await pool.query(`
@@ -1129,6 +1138,43 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
 });
 
 
+
+// Regras persistentes do Painel de lucro (compartilhadas entre aparelhos)
+app.get("/api/profit-rules",requireAdmin,async(req,res)=>{
+  try{
+    const rows=(await pool.query(`select normalized_name,display_name,alias_product_id,historical_unit_cost,ignored,updated_at from profit_historical_rules order by display_name`)).rows;
+    res.json(rows);
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar regras históricas do lucro."})}
+});
+
+app.put("/api/profit-rules/:key",requireAdmin,async(req,res)=>{
+  const key=String(req.params.key||"").trim();
+  const name=String(req.body.display_name||key).trim();
+  if(!key||!name)return res.status(400).json({error:"Produto histórico inválido."});
+  const aliasRaw=req.body.alias_product_id;
+  const alias=aliasRaw===null||aliasRaw===undefined||aliasRaw===""?null:Number(aliasRaw);
+  const costRaw=req.body.historical_unit_cost;
+  const cost=costRaw===null||costRaw===undefined||costRaw===""?null:Number(costRaw);
+  const ignored=Boolean(req.body.ignored);
+  if(alias!==null&&(!Number.isInteger(alias)||alias<=0))return res.status(400).json({error:"Produto associado inválido."});
+  if(cost!==null&&(!Number.isFinite(cost)||cost<=0))return res.status(400).json({error:"Custo histórico inválido."});
+  try{
+    if(alias!==null){
+      const exists=await pool.query("select id from products where id=$1",[alias]);
+      if(!exists.rowCount)return res.status(404).json({error:"Produto associado não encontrado."});
+    }
+    const row=(await pool.query(`
+      insert into profit_historical_rules(normalized_name,display_name,alias_product_id,historical_unit_cost,ignored,updated_at)
+      values($1,$2,$3,$4,$5,now())
+      on conflict(normalized_name) do update set
+        display_name=excluded.display_name,
+        alias_product_id=coalesce(excluded.alias_product_id,profit_historical_rules.alias_product_id),
+        historical_unit_cost=coalesce(excluded.historical_unit_cost,profit_historical_rules.historical_unit_cost),
+        ignored=excluded.ignored,updated_at=now()
+      returning *`,[key,name,alias,cost,ignored])).rows[0];
+    res.json(row);
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao salvar regra histórica do lucro."})}
+});
 
 app.get("/api/reports/period",requireAdmin,async(req,res)=>{
   try{
