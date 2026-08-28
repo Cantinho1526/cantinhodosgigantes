@@ -961,7 +961,10 @@ function renderProductAdminList(){
   const q=normalizeProductSearch($("productSearch")?.value||"");
   const category=$("productCategoryFilter")?.value||"";
   const quick=$("productQuickFilter")?.value||"all";
-  const rows=adminProductCache.filter(p=>{
+  const activeProducts=adminProductCache.filter(p=>p.active!==false);
+  const archivedProducts=adminProductCache.filter(p=>p.active===false);
+  const base=quick==="archived"?archivedProducts:activeProducts;
+  const rows=base.filter(p=>{
     const hay=normalizeProductSearch([p.name,p.category,p.description,p.emoji].join(" "));
     if(q&&!hay.includes(q))return false;
     if(category&&String(p.category)!==category)return false;
@@ -976,7 +979,10 @@ function renderProductAdminList(){
 
   const box=$("productAdminResults");
   const count=$("productResultCount");
-  if(count)count.textContent=rows.length+" de "+adminProductCache.length+" produto(s)";
+  if(count){
+    const suffix=quick==="archived"?" arquivado(s)":" ativo(s)";
+    count.textContent=rows.length+" de "+base.length+" produto(s)"+suffix+(archivedProducts.length?" • "+archivedProducts.length+" arquivado(s) no total":"");
+  }
   if(!box)return;
   box.innerHTML=rows.length?rows.map(p=>{
     const price=Number(p.price||0);
@@ -984,17 +990,19 @@ function renderProductAdminList(){
     const profit=price-cost;
     const margin=price>0?(profit/price)*100:0;
     const low=p.stock_control&&Number(p.stock_quantity||0)<=Number(p.stock_low_threshold||0);
-    return '<div class="productRow">'+
+    const archived=p.active===false;
+    return '<div class="productRow" style="'+(archived?'opacity:.78;border-left:3px solid #666;padding-left:12px':'')+'">'+
       '<div style="min-width:0">'+
-        '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+ (low?' <span style="color:#ffb74d;font-size:12px;font-weight:900">⚠️ ESTOQUE BAIXO</span>':'')+
+        '<b>'+E(p.emoji)+' '+E(p.name)+'</b>'+ (archived?' <span style="color:#aaa;font-size:12px;font-weight:900">📦 ARQUIVADO</span>':(low?' <span style="color:#ffb74d;font-size:12px;font-weight:900">⚠️ ESTOQUE BAIXO</span>':''))+
         '<div style="color:#aaa;font-size:13px">'+E(p.category)+' • Venda: '+R(price)+'</div>'+ 
         '<div style="font-size:13px;margin-top:4px">'+
           (cost>0?('<span style="color:#aaa">Custo: '+R(cost)+'</span> • <span style="color:#ffd34d;font-weight:800">Lucro: '+R(profit)+'</span> • <span style="color:#aaa">Margem: '+margin.toFixed(1).replace(".",",")+'%</span>'):'<span style="color:#ffb74d;font-weight:800">⚠️ Custo não informado</span>')+
         '</div>'+ 
       '</div>'+ 
       '<div class="productActions">'+
-        '<button class="secondary" onclick="productForm('+p.id+')">Editar</button>'+ 
-        '<button class="danger" onclick="deleteProduct('+p.id+',\''+E(p.name).replace(/'/g,"\\'")+'\')">Excluir</button>'+ 
+        (archived
+          ? '<button class="btn" onclick="restoreProduct('+p.id+')">↩️ Restaurar</button>'
+          : '<button class="secondary" onclick="productForm('+p.id+')">Editar</button><button class="danger" onclick="deleteProduct('+p.id+','+JSON.stringify(String(p.name||''))+')">📦 Arquivar</button>')+
       '</div>'+ 
     '</div>';
   }).join(""):'<div class="empty" style="padding:28px 12px">🔎 Nenhum produto encontrado com esses filtros.</div>';
@@ -1010,14 +1018,14 @@ function clearProductFilters(){
 
 async function products(){
   try{
-    const a=await api("/api/admin/products");
+    const a=await api("/api/admin/products?include_archived=1");
     adminProductCache=a;
     const categories=[...new Set(a.map(p=>String(p.category||"")).filter(Boolean))].sort((x,y)=>x.localeCompare(y,"pt-BR"));
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<style>'+ 
           '#productAdminTools{margin:14px 0 8px;padding:14px;border:1px solid #4a3b00;border-radius:14px;background:#111}'+
-          '#productAdminTools .patGrid{display:grid;grid-template-columns:minmax(240px,2fr) minmax(170px,1fr) minmax(170px,1fr) auto;gap:10px;align-items:end}'+
+          '#productAdminTools .patGrid{display:grid;grid-template-columns:minmax(240px,2fr) minmax(170px,1fr) minmax(190px,1fr) auto;gap:10px;align-items:end}'+
           '#productAdminTools label{display:block;color:#aaa;font-size:12px;font-weight:800;margin:0 0 5px}'+
           '#productAdminTools input,#productAdminTools select{width:100%;min-height:44px;margin:0}'+
           '#productAdminTools .searchWrap{position:relative}'+
@@ -1027,12 +1035,12 @@ async function products(){
           '@media(max-width:800px){#productAdminTools .patGrid{grid-template-columns:1fr 1fr}#productAdminTools .patSearch{grid-column:1/-1}}'+
           '@media(max-width:520px){#productAdminTools .patGrid{grid-template-columns:1fr}#productAdminTools .patSearch{grid-column:auto}#productAdminTools button{width:100%}}'+
         '</style>'+ 
-        '<div class="row"><h2>🍽️ Cardápio</h2><button class="btn" onclick="productForm()">+ Produto</button></div>'+ 
+        '<div class="row"><div><h2>🍽️ Cardápio</h2><div style="color:#aaa;font-size:13px">Produtos são arquivados sem apagar o histórico de vendas.</div></div><button class="btn" onclick="productForm()">+ Produto</button></div>'+ 
         '<div id="productAdminTools">'+
           '<div class="patGrid">'+
             '<div class="patSearch"><label>Pesquisar produto</label><div class="searchWrap"><span>🔎</span><input id="productSearch" type="search" placeholder="Digite o nome, categoria ou descrição..." autocomplete="off" oninput="renderProductAdminList()"></div></div>'+ 
             '<div><label>Categoria</label><select id="productCategoryFilter" onchange="renderProductAdminList()"><option value="">Todas as categorias</option>'+categories.map(c=>'<option value="'+E(c)+'">'+E(c)+'</option>').join("")+'</select></div>'+ 
-            '<div><label>Filtro rápido</label><select id="productQuickFilter" onchange="renderProductAdminList()"><option value="all">Todos os produtos</option><option value="nocost">💰 Sem custo</option><option value="lowstock">⚠️ Estoque baixo</option><option value="stock">📦 Com controle de estoque</option></select></div>'+ 
+            '<div><label>Filtro rápido</label><select id="productQuickFilter" onchange="renderProductAdminList()"><option value="all">Todos os ativos</option><option value="nocost">💰 Sem custo</option><option value="lowstock">⚠️ Estoque baixo</option><option value="stock">📦 Com controle de estoque</option><option value="archived">🗄️ Arquivados</option></select></div>'+ 
             '<button class="secondary" onclick="clearProductFilters()">✕ Limpar</button>'+ 
           '</div>'+ 
           '<div id="productResultCount"></div>'+ 
@@ -1279,10 +1287,46 @@ async function saveProduct(id){
 }
 
 async function deleteProduct(id,name){
-  if(!confirm('Tem certeza que deseja excluir "'+name+'"?'))return;
+  try{
+    const d=await api("/api/products/"+id+"/archive-impact");
+    const h=d.history||{},o=d.open||{},p=d.product||{};
+    const openWarn=Number(o.orders||0)>0
+      ? '<div class="notice" style="border-color:#7a5200;background:#2b1d00;color:#ffd98a;margin-top:10px">⚠️ <b>Há '+Number(o.orders||0)+' pedido(s) em comanda aberta</b> contendo este produto ('+Number(o.units||0)+' unidade(s)). Esses pedidos serão preservados e continuarão na cozinha/comanda.</div>'
+      : '';
+    const stockInfo=p.stock_control
+      ? '<div><small style="color:#aaa">Estoque atual</small><strong>'+Number(p.stock_quantity||0)+' un.</strong></div>'
+      : '<div><small style="color:#aaa">Estoque</small><strong>Sem controle</strong></div>';
+    modal(
+      '<h2>📦 Arquivar produto</h2>'+ 
+      '<div class="notice"><b>'+E(name)+'</b> será retirado do cardápio, mas <b>nenhuma venda será apagada</b>. Pedidos, faturamento, custos, lucro e relatórios históricos permanecem intactos.</div>'+ 
+      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0">'+
+        '<div class="reportBox"><small>Pedidos no histórico</small><strong>'+Number(h.orders||0)+'</strong></div>'+ 
+        '<div class="reportBox"><small>Unidades vendidas</small><strong>'+Number(h.units||0)+'</strong></div>'+ 
+        '<div class="reportBox"><small>Faturamento histórico</small><strong>'+R(Number(h.revenue||0))+'</strong></div>'+ 
+      '</div>'+openWarn+
+      '<div style="border:1px solid #333;border-radius:12px;padding:10px 12px;margin:10px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px">'+stockInfo+'<div><small style="color:#aaa">Depois de arquivar</small><strong>Disponível para restaurar</strong></div></div>'+ 
+      '<div style="color:#aaa;font-size:13px;margin:10px 0 16px">Use o filtro <b>🗄️ Arquivados</b> no Cardápio para restaurar este produto a qualquer momento.</div>'+ 
+      '<button class="danger" onclick="confirmArchiveProduct('+Number(id)+')">📦 Arquivar e preservar histórico</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+async function confirmArchiveProduct(id){
   try{
     await api("/api/products/"+id,{method:"DELETE"});
-    products();
+    closeModal();
+    await products();
+  }catch(e){alert(e.message)}
+}
+
+async function restoreProduct(id){
+  if(!confirm("Restaurar este produto e disponibilizá-lo novamente no cardápio?"))return;
+  try{
+    await api("/api/products/"+id+"/restore",{method:"POST"});
+    await products();
+    if($("productQuickFilter"))$("productQuickFilter").value="archived";
+    renderProductAdminList();
   }catch(e){alert(e.message)}
 }
 
