@@ -364,7 +364,7 @@ async function checkNewOrders(){
     const byId=new Map(a.map(o=>[Number(o.id),o]));
     newOrderQueue=newOrderQueue.filter(x=>{
       const current=byId.get(Number(x.id));
-      return current && current.status==="Recebido";
+      return current && current.status==="Recebido" && current.account_status==="Aberta";
     });
     savePendingAlerts();
 
@@ -380,7 +380,7 @@ async function checkNewOrders(){
     }
 
     const fresh=a
-      .filter(o=>(Number(o.id)||0)>lastKnownOrderId && o.status==="Recebido")
+      .filter(o=>(Number(o.id)||0)>lastKnownOrderId && o.status==="Recebido" && o.account_status==="Aberta")
       .sort((x,y)=>Number(x.id)-Number(y.id));
 
     if(fresh.length){
@@ -409,7 +409,7 @@ async function startOrderWatch(){
     const byId=new Map(a.map(o=>[Number(o.id),o]));
     newOrderQueue=newOrderQueue.filter(x=>{
       const current=byId.get(Number(x.id));
-      return current && current.status==="Recebido";
+      return current && current.status==="Recebido" && current.account_status==="Aberta";
     });
     savePendingAlerts();
 
