@@ -1245,7 +1245,7 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
       if(x.p.stock_control){
         const previous=Number(x.p.stock_quantity||0),next=previous-x.quantity;
         await c.query("update products set stock_quantity=$1 where id=$2",[next,x.p.id]);
-        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note) values($1,'Venda',$2,$3,$4,$5)`,[x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
+        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note) values($1,'Venda',$2,$3,$4,$5)`,[x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+(account.account_type==='Comanda QR'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
       }
     }
     await c.query("commit");res.json({ok:true,id:order.id,total});
@@ -1320,7 +1320,7 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
         await c.query(`
           insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
           values($1,'Cancelamento',$2,$3,$4,$5)
-        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • '+(account.account_type==='Avulsa'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
+        `,[x.id,q,previous,updated,'Cancelamento da comanda • Pedido #'+o.id+' • '+(account.account_type==='Comanda QR'?'Comanda '+account.customer_name:'Mesa '+account.table_number)]);
       }
       await c.query("update orders set status='Cancelado' where id=$1",[o.id]);
     }
@@ -1385,7 +1385,7 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
     `,[payment,account.id]);
 
     await c.query("commit");
-    res.json({ok:true,total,payment_method:payment,table_number:account.table_number});
+    res.json({ok:true,total,payment_method:payment,table_number:account.table_number,account_type:account.account_type,customer_name:account.customer_name});
   }catch(e){
     await c.query("rollback");
     console.error(e);
@@ -1578,7 +1578,7 @@ app.get("/api/qr-commands/status",requireAdmin,async(req,res)=>{
 app.get("/api/sales/history",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
-      select a.id,a.table_number,a.payment_method,a.opened_at,a.closed_at,
+      select a.id,a.table_number,a.account_type,a.customer_name,a.payment_method,a.opened_at,a.closed_at,
              coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
              count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
@@ -2024,7 +2024,7 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
     `,[date])).rows[0];
 
     const accounts=(await pool.query(`
-      select a.id,a.table_number,a.payment_method,a.closed_at,
+      select a.id,a.table_number,a.account_type,a.customer_name,a.payment_method,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
         count(o.id) filter(where o.status<>'Cancelado')::int order_count,
         exists(
