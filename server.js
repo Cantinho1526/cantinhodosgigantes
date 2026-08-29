@@ -33,6 +33,8 @@ app.use(express.json({limit:"1mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const ADMIN_SESSION_HOURS=12;
+const LOOSE_ACCOUNT_BASE=1000;
+const LOOSE_ACCOUNT_MAX=200;
 
 function createAdminToken(){
   const payload={
@@ -233,6 +235,17 @@ function validTableAccess(tableNumber,token){
   const a=Buffer.from(String(token||""));
   const b=Buffer.from(expected);
   return a.length===b.length && crypto.timingSafeEqual(a,b);
+}
+
+function isLooseAccountNumber(tableNumber){
+  return Number.isInteger(Number(tableNumber)) && Number(tableNumber)>LOOSE_ACCOUNT_BASE && Number(tableNumber)<=LOOSE_ACCOUNT_BASE+LOOSE_ACCOUNT_MAX;
+}
+function looseAccountCode(tableNumber){
+  const n=Number(tableNumber)-LOOSE_ACCOUNT_BASE;
+  return "A"+String(n).padStart(3,"0");
+}
+function serviceLabel(tableNumber){
+  return isLooseAccountNumber(tableNumber)?"Comanda "+looseAccountCode(tableNumber):"Mesa "+Number(tableNumber);
 }
 
 async function mercadoPago(pathname,options={}){
@@ -497,7 +510,11 @@ app.post("/api/orders",async(req,res)=>{
     return res.status(400).json({error:"Há itens demais neste pedido."});
   }
   if(!validTableAccess(tableNumber,accessToken)){
-    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
+    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa/comanda."});
+  }
+  if(!isLooseAccountNumber(tableNumber)){
+    const exists=(await pool.query("select 1 from tables_restaurant where number=$1 limit 1",[tableNumber])).rowCount;
+    if(!exists)return res.status(404).json({error:"Mesa não cadastrada."});
   }
 
   const c=await pool.connect();
@@ -550,7 +567,7 @@ app.post("/api/orders",async(req,res)=>{
         await c.query(
           `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
            values($1,'Venda',$2,$3,$4,$5)`,
-          [x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • Mesa '+tableNumber]
+          [x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+serviceLabel(tableNumber)]
         );
       }
     }
@@ -1420,6 +1437,36 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
     );
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao salvar configurações."})}
+});
+
+app.get("/api/qrcodes/avulsas",requireAdmin,async(req,res)=>{
+  try{
+    const start=Math.max(1,Math.min(LOOSE_ACCOUNT_MAX,Math.floor(Number(req.query.start)||1)));
+    const limit=Math.max(1,Math.min(20,Math.floor(Number(req.query.limit)||20)));
+    const end=Math.min(LOOSE_ACCOUNT_MAX,start+limit-1);
+    const virtuals=[];
+    for(let n=start;n<=end;n++)virtuals.push(LOOSE_ACCOUNT_BASE+n);
+
+    const openRows=(await pool.query(`
+      select table_number,id,opened_at
+      from table_accounts
+      where status='Aberta' and table_number = any($1::int[])
+    `,[virtuals])).rows;
+    const openMap=new Map(openRows.map(x=>[Number(x.table_number),x]));
+    const items=[];
+    for(let n=start;n<=end;n++){
+      const tableNumber=LOOSE_ACCOUNT_BASE+n;
+      const code=looseAccountCode(tableNumber);
+      const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(tableNumber)}&t=${tableAccessToken(tableNumber)}&tipo=avulsa&comanda=${encodeURIComponent(code)}`;
+      const png=await QRCode.toDataURL(url,{width:520,margin:2});
+      const open=openMap.get(tableNumber);
+      items.push({number:n,code,table_number:tableNumber,url,png,status:open?"EM_USO":"LIVRE",account_id:open?.id||null,opened_at:open?.opened_at||null});
+    }
+    res.json({start,end,max:LOOSE_ACCOUNT_MAX,items});
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao gerar comandas QR."});
+  }
 });
 
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
