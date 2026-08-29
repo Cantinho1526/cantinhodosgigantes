@@ -1676,7 +1676,7 @@ async function closeCash(id){
   try{
     const notes=$("cashNotes")?$("cashNotes").value:"";
     const r=await api("/api/cash/"+id+"/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({notes})});
-    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Total PIX registrado: <b>'+R(r.total_received??r.session.closing_amount)+'</b></p><p>Conferência: <b>'+R(r.difference||0)+'</b></p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
+    modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Caixa fechado!</h2><p>Total PIX registrado: <b>'+R(r.total_received??r.session.closing_amount)+'</b></p><p style="color:#79e28a;font-weight:900">✅ Conferência automática concluída</p><button class="btn" onclick="closeModal();cash()">OK</button></div>');
   }catch(e){alert(e.message)}
 }
 
