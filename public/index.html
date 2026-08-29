@@ -800,6 +800,12 @@ async function refreshDashboardStats(){
 }
 
 
+function accountDisplayLabel(x){
+  return x&&x.account_type==="Comanda QR"
+    ? "Comanda "+String(x.customer_name||"")
+    : "Mesa "+String((x&&x.table_number)!=null?x.table_number:"");
+}
+
 async function accounts(){
   try{
     const a=await api("/api/accounts");
@@ -826,6 +832,7 @@ async function viewAccount(tableNumber){
     if(!data.open){alert("Esta mesa não possui comanda aberta.");accounts();return}
 
     const account=data.account;
+    window.__viewAccountContext=account;
     modal(
       '<h2>'+(account.account_type==="Comanda QR"?'🎟️ Comanda — '+E(account.customer_name):'🪑 Comanda — Mesa '+tableNumber)+'</h2>'+
       '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
@@ -846,10 +853,16 @@ async function viewAccount(tableNumber){
 }
 
 let selectedPayment="";
+let closingAccountContext=null;
 function closeAccountForm(accountId,tableNumber,total){
   selectedPayment="PIX";
+  const ctx=window.__viewAccountContext&&Number(window.__viewAccountContext.id)===Number(accountId)
+    ? window.__viewAccountContext
+    : {id:accountId,table_number:tableNumber,account_type:"Mesa",customer_name:""};
+  closingAccountContext=ctx;
+  const label=accountDisplayLabel(ctx);
   modal(
-    '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
+    '<h2>Fechar conta — '+E(label)+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
     '<div class="notice" style="margin-top:10px">💠 Este sistema registra pagamentos somente em <b>PIX</b>. Use este fechamento manual apenas quando o PIX já tiver sido conferido fora do pagamento automático do cliente.</div>'+
     '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">💠 Confirmar PIX manual</button> '+
@@ -857,13 +870,15 @@ function closeAccountForm(accountId,tableNumber,total){
   );
 }
 
+
 function selectPayment(method){
   selectedPayment=method;
 }
 
 async function confirmCloseAccount(accountId,tableNumber){
   if(!selectedPayment){alert("Escolha a forma de pagamento.");return}
-  if(!confirm("Confirmar fechamento da conta da Mesa "+tableNumber+" em "+selectedPayment+"?"))return;
+  const label=accountDisplayLabel(closingAccountContext||{table_number:tableNumber,account_type:"Mesa"});
+  if(!confirm("Confirmar fechamento da conta da "+label+" em "+selectedPayment+"?"))return;
 
   try{
     const r=await api("/api/accounts/"+accountId+"/close",{
@@ -875,7 +890,7 @@ async function confirmCloseAccount(accountId,tableNumber){
       '<div style="text-align:center">'+
         '<div style="font-size:56px">✅</div>'+
         '<h2>Conta fechada!</h2>'+
-        '<p>Mesa '+r.table_number+'</p>'+
+        '<p>'+E(r.account_type==="Comanda QR"?"Comanda "+r.customer_name:"Mesa "+r.table_number)+'</p>'+
         '<p><b>'+R(r.total)+'</b> • '+E(r.payment_method)+'</p>'+
         '<button class="btn" onclick="closeModal();dashboard()">OK</button>'+
       '</div>'
@@ -1719,7 +1734,7 @@ async function salesHistory(){
     const totals=a.reduce((z,x)=>{const v=Number(x.total);z.total+=v;z[x.payment_method]=(z[x.payment_method]||0)+v;return z},{total:0,PIX:0,Dinheiro:0,"Cartão":0});
     $("adminContent").innerHTML='<div class="panel"><h2>📊 Histórico de vendas</h2>'+ 
       '<div class="cashSummary"><div class="cashBox"><small>Total</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div><div class="cashBox"><small>Dinheiro</small><strong>'+R(totals.Dinheiro)+'</strong></div><div class="cashBox"><small>Cartão</small><strong>'+R(totals["Cartão"])+'</strong></div></div>'+ 
-      (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>Mesa '+x.table_number+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
+      (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>'+E(accountDisplayLabel(x))+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
   }catch(e){alert(e.message)}
 }
 
@@ -2008,8 +2023,8 @@ async function dailyReport(date){
         (Number(r.summary.itens_sem_custo||0)>0?'<div class="warn">⚠️ <b>Lucro total não pode ser calculado com segurança.</b> '+r.summary.itens_sem_custo+' item(ns) vendido(s) estão sem custo cadastrado, somando '+R(r.summary.faturamento_sem_custo)+' do faturamento.</div>':'')+
         '<div class="reportSection"><h3>Contas fechadas</h3>'+
           (r.accounts.length?
-            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
-            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_source||a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Comanda</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
+            r.accounts.map(a=>'<tr><td>'+E(accountDisplayLabel(a))+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_source||a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
             '</tbody></table></div>'
           :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
         '</div>'+
@@ -2135,8 +2150,8 @@ function exportDailyCSV(){
     ["Lucro parcial conhecido",r.summary.lucro_bruto_parcial||0],
     ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],[],
     ["Contas fechadas"],
-    ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
-    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_source||a.payment_method||"",a.order_count,a.total]),[],
+    ["Comanda","Fechamento","Pagamento","Pedidos","Valor"],
+    ...r.accounts.map(a=>[accountDisplayLabel(a),new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_source||a.payment_method||"",a.order_count,a.total]),[],
     ["Produtos vendidos"],
     ["Produto","Quantidade","Total"],
     ...r.products.map(p=>[p.name,p.quantity,p.total])
