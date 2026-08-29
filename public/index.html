@@ -843,14 +843,51 @@ async function viewAccount(tableNumber){
           '<div style="margin-top:6px">'+o.items.map(i=>i.quantity+'x '+E(i.name)).join("<br>")+'</div>'+
           (o.observation?'<div style="color:#aaa;margin-top:5px"><b>Obs.:</b> '+E(o.observation)+'</div>':'')+
           '<div style="margin-top:6px;color:#ffd34d"><b>'+R(o.total)+'</b></div>'+
+          (o.status!=="Cancelado"
+            ? '<div style="margin-top:10px"><button class="danger" onclick="cancelOrderFromAccount('+o.id+','+tableNumber+')">🚫 Cancelar pedido</button></div>'
+            : '')+
         '</div>'
       ).join("")+
       '<h2 style="margin-top:18px">Total da comanda: '+R(data.total)+'</h2>'+
-      '<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> '+
+      (Number(data.total)>0?'<button class="btn" onclick="closeAccountForm('+account.id+','+tableNumber+','+data.total+')">Fechar conta</button> ':'')+
       '<button class="secondary" onclick="closeModal()">Voltar</button>'
     );
   }catch(e){alert(e.message)}
 }
+
+
+async function cancelOrderFromAccount(orderId,tableNumber){
+  if(!confirm(
+    "Cancelar o Pedido #"+orderId+"?\n\n"+
+    "O pedido continuará no histórico como CANCELADO. Itens com controle de estoque serão devolvidos automaticamente."
+  ))return;
+
+  try{
+    const r=await api("/api/orders/"+orderId,{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({status:"Cancelado"})
+    });
+
+    if(r.account_closed){
+      alert(
+        "Pedido #"+orderId+" cancelado.\n"+
+        (Number(r.restored_units||0)>0?"Estoque devolvido: "+Number(r.restored_units)+" unidade(s).\n":"")+
+        "Como não restaram pedidos, a comanda foi encerrada sem pagamento."
+      );
+      closeModal();
+      await accounts();
+      return;
+    }
+
+    alert(
+      "Pedido #"+orderId+" cancelado."+
+      (Number(r.restored_units||0)>0?"\nEstoque devolvido: "+Number(r.restored_units)+" unidade(s).":"")
+    );
+    await viewAccount(tableNumber);
+  }catch(e){alert(e.message)}
+}
+
 
 let selectedPayment="";
 let closingAccountContext=null;
