@@ -231,6 +231,7 @@ textarea{min-height:88px}
 
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
+let pixAutoTimer=null,pixAutoPaymentId=null,pixAutoStartedAt=0;
 let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
 
 try{
@@ -475,11 +476,17 @@ function setMode(mode){
   $("cart").classList.toggle("hidden",mode==="admin"||B.length===0);
 }
 
-function modal(html){
+function stopPixAutoCheck(){
+  if(pixAutoTimer){clearInterval(pixAutoTimer);pixAutoTimer=null}
+  pixAutoPaymentId=null;
+  pixAutoStartedAt=0;
+}
+function modal(html,{keepPixWatcher=false}={}){
+  if(!keepPixWatcher)stopPixAutoCheck();
   $("modal").innerHTML='<div class="modalBox">'+html+'</div>';
   $("modal").classList.remove("hidden");
 }
-function closeModal(){$("modal").classList.add("hidden")}
+function closeModal(){stopPixAutoCheck();$("modal").classList.add("hidden")}
 
 
 function clientTarget(){
@@ -696,8 +703,10 @@ async function createPix(){
         '<button class="secondary" onclick="checkPix('+Number(d.payment_id)+')">🔄 Verificar pagamento</button>'+ 
       '</div>'+ 
       '<p style="color:#aaa;font-size:12px">Pagamento processado pelo Mercado Pago.</p>'+ 
+      '<div id="pixAutoStatus" style="color:#aaa;font-size:12px;margin-top:8px">Verificando o pagamento automaticamente…</div>'+
       '<button class="secondary" onclick="closeModal()">Fechar</button>'+ 
     '</div>');
+    startPixAutoCheck(Number(d.payment_id));
   }catch(e){alert(e.message)}
 }
 
@@ -706,13 +715,47 @@ async function copyPix(){
   try{await navigator.clipboard.writeText(code);alert("Código PIX copiado!")}catch(e){alert("Não foi possível copiar automaticamente. Selecione o código e copie manualmente.")}
 }
 
-async function checkPix(id){
+async function checkPix(id,{silent=false}={}){
   const token=new URLSearchParams(location.search).get("t");
   try{
     const d=await api("/api/client/pix/"+id+"/status?t="+encodeURIComponent(token));
-    if(d.paid)modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago.</p><button class="btn" onclick="closeModal()">OK</button></div>');
-    else alert("Pagamento ainda não confirmado. Status: "+d.status);
-  }catch(e){alert(e.message)}
+    if(d.paid){
+      stopPixAutoCheck();
+      modal('<div style="text-align:center"><div style="font-size:56px">✅</div><h2>Pagamento confirmado!</h2><p>O PIX foi identificado pelo Mercado Pago e sua comanda foi encerrada.</p><button class="btn" onclick="closeModal()">OK</button></div>');
+      return d;
+    }
+    if(!silent)alert("Pagamento ainda não confirmado. Status: "+d.status);
+    return d;
+  }catch(e){
+    if(!silent)alert(e.message);
+    return null;
+  }
+}
+
+function startPixAutoCheck(id){
+  stopPixAutoCheck();
+  pixAutoPaymentId=Number(id);
+  pixAutoStartedAt=Date.now();
+  let checking=false;
+  const run=async()=>{
+    if(checking||pixAutoPaymentId!==Number(id))return;
+    if(Date.now()-pixAutoStartedAt>10*60*1000){
+      stopPixAutoCheck();
+      const el=$("pixAutoStatus");
+      if(el)el.textContent="A verificação automática foi pausada. Use ‘Verificar pagamento’ se necessário.";
+      return;
+    }
+    checking=true;
+    try{
+      const d=await checkPix(id,{silent:true});
+      if(d&&!d.paid){
+        const el=$("pixAutoStatus");
+        if(el)el.textContent="Aguardando confirmação do PIX…";
+      }
+    }finally{checking=false}
+  };
+  pixAutoTimer=setInterval(run,5000);
+  setTimeout(run,1800);
 }
 
 function adminLogin(){
