@@ -838,42 +838,135 @@ app.post("/api/admin/orders/cleanup-closed",requireAdmin,async(req,res)=>{
 
 app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   const allowed=["Recebido","Em preparo","Pronto","Entregue","Cancelado"];
-  if(!allowed.includes(req.body.status)){
+  const next=String(req.body.status||"");
+  if(!allowed.includes(next)){
     return res.status(400).json({error:"Status inválido."});
   }
+
   const c=await pool.connect();
   try{
     await c.query("begin");
     const id=Number(req.params.id);
-    const current=(await c.query("select status from orders where id=$1 for update",[id])).rows[0];
-    if(!current){await c.query("rollback");return res.status(404).json({error:"Pedido não encontrado."});}
-    const next=req.body.status;
-    if(current.status!=="Cancelado" && next==="Cancelado"){
-      const items=(await c.query(`select p.id,p.name,p.stock_quantity,oi.quantity from order_items oi
-        join products p on p.id=oi.product_id where oi.order_id=$1 and p.stock_control=true for update`,[id])).rows;
-      for(const x of items){
-        const previous=Number(x.stock_quantity||0), q=Number(x.quantity||0), updated=previous+q;
-        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
-        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-          values($1,'Cancelamento',$2,$3,$4,$5)`,[x.id,q,previous,updated,'Devolução do pedido #'+id]);
-      }
-    }else if(current.status==="Cancelado" && next!=="Cancelado"){
-      const items=(await c.query(`select p.id,p.name,p.stock_quantity,oi.quantity from order_items oi
-        join products p on p.id=oi.product_id where oi.order_id=$1 and p.stock_control=true for update`,[id])).rows;
-      for(const x of items){
-        const previous=Number(x.stock_quantity||0), q=Number(x.quantity||0);
-        if(previous<q)throw Error(`Estoque insuficiente para ${x.name}.`);
-        const updated=previous-q;
-        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
-        await c.query(`insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
-          values($1,'Reativação',$2,$3,$4,$5)`,[x.id,q,previous,updated,'Pedido #'+id+' reativado']);
-      }
+    if(!Number.isInteger(id)||id<=0){
+      await c.query("rollback");
+      return res.status(400).json({error:"Pedido inválido."});
     }
+
+    const current=(await c.query(`
+      select o.id,o.status,o.account_id,o.table_number,
+             a.status account_status,a.account_type,a.customer_name
+      from orders o
+      left join table_accounts a on a.id=o.account_id
+      where o.id=$1
+      for update of o
+    `,[id])).rows[0];
+
+    if(!current){
+      await c.query("rollback");
+      return res.status(404).json({error:"Pedido não encontrado."});
+    }
+
+    if(current.status===next){
+      await c.query("commit");
+      return res.json({ok:true,status:next,unchanged:true});
+    }
+
+    // Cancelamento é financeiro/estoque: somente pedido de uma comanda ainda aberta.
+    if(next==="Cancelado"){
+      if(current.status==="Cancelado"){
+        await c.query("commit");
+        return res.json({ok:true,status:"Cancelado",unchanged:true});
+      }
+      if(!current.account_id || current.account_status!=="Aberta"){
+        await c.query("rollback");
+        return res.status(409).json({error:"Este pedido não pode ser cancelado porque a comanda já foi encerrada."});
+      }
+
+      const paidPix=(await c.query(`
+        select id from pix_payments
+        where account_id=$1
+          and lower(status) in ('paid','processed','approved')
+        limit 1
+        for update
+      `,[current.account_id])).rows[0];
+      if(paidPix){
+        await c.query("rollback");
+        return res.status(409).json({error:"Cancelamento bloqueado: esta comanda já possui PIX pago/aprovado."});
+      }
+
+      // Qualquer PIX pendente foi gerado com o total anterior e não pode continuar válido no sistema.
+      await c.query(`
+        update pix_payments
+        set status='cancelled',updated_at=now()
+        where account_id=$1
+          and lower(status) in ('pending','action_required','processing')
+      `,[current.account_id]);
+
+      const items=(await c.query(`
+        select p.id,p.name,p.stock_quantity,oi.quantity
+        from order_items oi
+        join products p on p.id=oi.product_id
+        where oi.order_id=$1 and p.stock_control=true
+        for update of p
+      `,[id])).rows;
+
+      let restoredUnits=0;
+      for(const x of items){
+        const previous=Number(x.stock_quantity||0);
+        const q=Number(x.quantity||0);
+        const updated=previous+q;
+        await c.query("update products set stock_quantity=$1 where id=$2",[updated,x.id]);
+        await c.query(`
+          insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
+          values($1,'Cancelamento',$2,$3,$4,$5)
+        `,[x.id,q,previous,updated,'Devolução do pedido #'+id+' • '+(current.account_type==='Comanda QR'?'Comanda '+current.customer_name:'Mesa '+current.table_number)]);
+        restoredUnits+=q;
+      }
+
+      await c.query("update orders set status='Cancelado' where id=$1",[id]);
+
+      const remaining=Number((await c.query(`
+        select count(*)::int qty
+        from orders
+        where account_id=$1 and status<>'Cancelado'
+      `,[current.account_id])).rows[0].qty||0);
+
+      let accountClosed=false;
+      if(remaining===0){
+        const closed=await c.query(`
+          update table_accounts
+          set status='Cancelada',payment_method=null,closed_at=now()
+          where id=$1 and status='Aberta'
+        `,[current.account_id]);
+        accountClosed=closed.rowCount===1;
+      }
+
+      await c.query("commit");
+      return res.json({
+        ok:true,status:"Cancelado",restored_units:restoredUnits,
+        remaining_orders:remaining,account_closed:accountClosed,
+        account_type:current.account_type,customer_name:current.customer_name,
+        table_number:current.table_number
+      });
+    }
+
+    // Um pedido cancelado não pode ser reativado silenciosamente: isso poderia baixar estoque novamente
+    // e reabrir uma sessão financeira antiga. Se necessário, faça um novo pedido.
+    if(current.status==="Cancelado"){
+      await c.query("rollback");
+      return res.status(409).json({error:"Pedido cancelado não pode ser reativado. Faça um novo pedido."});
+    }
+
     await c.query("update orders set status=$1 where id=$2",[next,id]);
     await c.query("commit");
-    res.json({ok:true});
-  }catch(e){await c.query("rollback");res.status(500).json({error:e.message||"Erro ao atualizar status."})}
-  finally{c.release()}
+    res.json({ok:true,status:next});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(500).json({error:e.message||"Erro ao atualizar status."});
+  }finally{
+    c.release();
+  }
 });
 
 app.get("/api/client/account/:table",async(req,res)=>{
