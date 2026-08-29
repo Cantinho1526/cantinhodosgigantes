@@ -299,7 +299,7 @@ function showOrderAlert(o,isTest=false){
   const items=(o.items||[]).map(i=>i.quantity+'x '+E(i.name)).join(' • ');
   div.innerHTML=
     '<h3>🔔 '+(isTest?'TESTE DO ALERTA':'NOVO PEDIDO!')+'</h3>'+
-    '<p><b>Pedido #'+E(o.id)+' • '+E(serviceLabel(o.table_number))+'</b></p>'+
+    '<p><b>Pedido #'+E(o.id)+' • '+E(orderLabel(o))+'</b></p>'+
     '<p>'+items+'</p>'+
     '<div class="row">'+
       (isTest
@@ -433,12 +433,6 @@ function testOrderAlert(){
 const $=x=>document.getElementById(x);
 const R=v=>{const n=Number(v);return (Number.isFinite(n)?n:0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})};
 const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
-const LOOSE_ACCOUNT_BASE=1000;
-const LOOSE_ACCOUNT_MAX=200;
-function isLooseService(n){const x=Number(n);return Number.isInteger(x)&&x>LOOSE_ACCOUNT_BASE&&x<=LOOSE_ACCOUNT_BASE+LOOSE_ACCOUNT_MAX}
-function serviceCode(n){return "A"+String(Number(n)-LOOSE_ACCOUNT_BASE).padStart(3,"0")}
-function serviceLabel(n){return isLooseService(n)?"Comanda "+serviceCode(n):"Mesa "+Number(n)}
-function serviceIcon(n){return isLooseService(n)?"🎟️":"🪑"}
 
 async function api(url,opts={}){
   const headers={...(opts.headers||{})};
@@ -487,17 +481,37 @@ function modal(html){
 }
 function closeModal(){$("modal").classList.add("hidden")}
 
+
+function clientTarget(){
+  const qs=new URLSearchParams(location.search);
+  const command=String(qs.get("comanda")||"").trim().toUpperCase();
+  const mesa=qs.get("mesa");
+  const token=qs.get("t")||"";
+  return {command:/^A\d{3}$/.test(command)?command:"",mesa,token};
+}
+function targetLabel(){
+  const t=clientTarget();
+  return t.command?"🎟️ Comanda "+t.command:(t.mesa?"🪑 Mesa "+t.mesa:"Pedido");
+}
+function orderLabel(o){
+  return o&&o.account_type==="Comanda QR"&&o.customer_name
+    ? "Comanda "+o.customer_name
+    : "Mesa "+o.table_number;
+}
+
 async function client(){
   setMode("client");
   M=await api("/api/menu");
-  const mesa=new URLSearchParams(location.search).get("mesa");
+  const target=clientTarget();
+  const mesa=target.mesa;
+  const command=target.command;
 
   $("app").innerHTML=
     '<section class="hero">'+
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
-      (mesa?'<span class="tableTag">'+serviceIcon(mesa)+' '+E(serviceLabel(mesa))+'</span>':'')+
-      (mesa && new URLSearchParams(location.search).get("t")?'<div class="clientActions"><button class="secondary" onclick="myAccount()">🧾 Minha comanda</button></div>':'')+
+      (command?'<span class="tableTag">🎟️ Comanda '+E(command)+'</span>':(mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':''))+
+      ((command||mesa) && target.token?'<div class="clientActions"><button class="secondary" onclick="myAccount()">🧾 Minha comanda</button></div>':'')+
     '</section>'+
     '<div class="tabs">'+
       ["Todos",...M.categories.map(x=>x.name)].map(c=>
@@ -593,54 +607,65 @@ function renderCart(){
 
 function checkout(){
   if(!B.length)return;
-  const mesa=new URLSearchParams(location.search).get("mesa")||prompt("Número da mesa:","1");
-  if(!mesa)return;
+  const target=clientTarget();
+  const mesa=target.mesa||(!target.command?prompt("Número da mesa:","1"):null);
+  if(!target.command&&!mesa)return;
 
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
+  const label=target.command?"Comanda "+target.command:"Mesa "+mesa;
   modal(
-    '<h2>Confirmar pedido</h2>'+
-    '<div class="notice">'+serviceIcon(mesa)+' <b>'+E(serviceLabel(mesa))+'</b></div>'+
-    B.map(x=>'<p>'+x.quantity+'x '+E(x.name)+' — <b>'+R(x.quantity*x.price)+'</b></p>').join("")+
-    '<hr style="border-color:#333"><h3>Total: '+R(total)+'</h3>'+
-    '<div class="field"><label>Observação</label><textarea id="obs" placeholder="Ex.: sem cebola, bem passado..."></textarea></div>'+
-    '<button class="btn" onclick="sendOrder('+Number(mesa)+')">Enviar pedido</button> '+
+    '<h2>Confirmar pedido</h2>'+ 
+    '<div class="notice"><b>'+E(label)+'</b></div>'+ 
+    B.map(x=>'<p>'+x.quantity+'x '+E(x.name)+' — <b>'+R(x.quantity*x.price)+'</b></p>').join("")+ 
+    '<hr style="border-color:#333"><h3>Total: '+R(total)+'</h3>'+ 
+    '<div class="field"><label>Observação</label><textarea id="obs" placeholder="Ex.: sem cebola, bem passado..."></textarea></div>'+ 
+    '<button class="btn" onclick="sendOrder()">Enviar pedido</button> '+ 
     '<button class="secondary" onclick="closeModal()">Voltar</button>'
   );
 }
 
-async function sendOrder(mesa){
+async function sendOrder(){
+  const target=clientTarget();
+  const mesa=target.mesa;
   try{
+    const payload={
+      access_token:target.token,
+      items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
+      observation:$("obs").value
+    };
+    if(target.command)payload.command_code=target.command;
+    else payload.table=Number(mesa);
     const r=await api("/api/orders",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        table:mesa,
-        access_token:new URLSearchParams(location.search).get("t")||"",
-        items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
-        observation:$("obs").value
-      })
+      body:JSON.stringify(payload)
     });
     B=[];renderCart();
+    const label=target.command?"Comanda "+target.command:"Mesa "+mesa;
     modal(
       '<div style="text-align:center">'+
-        '<div style="font-size:56px">✅</div>'+
-        '<h2>Pedido enviado!</h2>'+
-        '<p>Pedido <b>#'+r.id+'</b> — '+E(serviceLabel(mesa))+'</p>'+
+        '<div style="font-size:56px">✅</div>'+ 
+        '<h2>Pedido enviado!</h2>'+ 
+        '<p>Pedido <b>#'+r.id+'</b> — '+E(label)+'</p>'+ 
         '<button class="btn" onclick="myAccount()">Ver minha comanda</button> '+
-        '<button class="secondary" onclick="closeModal()">OK</button>'+
+        '<button class="secondary" onclick="closeModal()">OK</button>'+ 
       '</div>'
     );
   }catch(e){alert(e.message)}
 }
 
 async function myAccount(){
-  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t");
-  if(!mesa||!token){alert("Abra o cardápio pelo QR Code da sua mesa.");return}
+  const target=clientTarget();
+  if((!target.mesa&&!target.command)||!target.token){alert("Abra o cardápio pelo QR Code da mesa ou da comanda.");return}
   try{
-    const d=await api("/api/client/account/"+encodeURIComponent(mesa)+"?t="+encodeURIComponent(token));
+    const url=target.command
+      ? "/api/client/command/"+encodeURIComponent(target.command)+"?t="+encodeURIComponent(target.token)
+      : "/api/client/account/"+encodeURIComponent(target.mesa)+"?t="+encodeURIComponent(target.token);
+    const d=await api(url);
+    const label=target.command?"Comanda "+target.command:"Mesa "+target.mesa;
     if(!d.open){modal('<h2>🧾 Minha comanda</h2><div class="empty">Ainda não há pedidos nesta comanda.</div><button class="secondary" onclick="closeModal()">Voltar</button>');return}
     const orders=d.orders.filter(o=>o.status!=="Cancelado");
-    modal('<h2>🧾 Minha comanda — '+E(serviceLabel(mesa))+'</h2>'+orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b>'+o.items.map(i=>'<div class="row"><span>'+i.quantity+'x '+E(i.name)+'</span><span>'+R(Number(i.unit_price)*i.quantity)+'</span></div>').join('')+'</div>').join('')+'<h2 style="margin-top:16px">Total: '+R(d.total)+'</h2><div class="notice">O pagamento abaixo é somente por PIX.</div><button class="btn" onclick="askPix()">💠 Pagar com PIX</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
+    modal('<h2>🧾 Minha comanda — '+E(label)+'</h2>'+orders.map(o=>'<div class="billOrder"><b>Pedido #'+o.id+'</b>'+o.items.map(i=>'<div class="row"><span>'+i.quantity+'x '+E(i.name)+'</span><span>'+R(Number(i.unit_price)*i.quantity)+'</span></div>').join('')+'</div>').join('')+'<h2 style="margin-top:16px">Total: '+R(d.total)+'</h2><div class="notice">O pagamento abaixo é somente por PIX.</div><button class="btn" onclick="askPix()">💠 Pagar com PIX</button> <button class="secondary" onclick="closeModal()">Voltar</button>');
   }catch(e){alert(e.message)}
 }
 
@@ -652,12 +677,13 @@ function askPix(){
 }
 
 async function createPix(){
-  const qs=new URLSearchParams(location.search),mesa=qs.get("mesa"),token=qs.get("t");
+  const target=clientTarget(),token=target.token;
   try{
+    const payload=target.command?{command_code:target.command,token}:{table:Number(target.mesa),token};
     const d=await api("/api/client/pix",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({table:Number(mesa),token})
+      body:JSON.stringify(payload)
     });
     const img=d.qr_code_base64?'<img class="pixQr" alt="QR Code Pix" src="data:image/png;base64,'+E(d.qr_code_base64)+'">':'';
     modal('<div style="text-align:center">'+
@@ -740,7 +766,7 @@ async function dashboard(){
         '<button onclick="stockHistory()">📋 Mov. Estoque</button>'+
         '<button onclick="settings()">⚙️ Configurações</button>'+
         '<button onclick="qrs()">📱 QR Mesas</button>'+
-        '<button onclick="looseQrs()">🎟️ Comandas QR</button>'+
+        '<button onclick="qrCommands()">🎟️ Comandas QR</button>'+
       '</div>'+
       '<div id="adminContent"></div>';
     startOrderWatch();
@@ -783,7 +809,7 @@ async function accounts(){
       (open.length?'<div class="accountGrid">'+open.map(x=>
         '<div class="accountCard open">'+
           '<span class="badgeOpen">ABERTA</span>'+
-          '<h3>'+serviceIcon(x.table_number)+' '+E(serviceLabel(x.table_number))+'</h3>'+
+          '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name):'Mesa '+x.table_number)+'</h3>'+
           '<div>'+x.order_count+' pedido(s)</div>'+
           '<div class="accountTotal">'+R(x.total)+'</div>'+
           '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
@@ -801,7 +827,7 @@ async function viewAccount(tableNumber){
 
     const account=data.account;
     modal(
-      '<h2>'+serviceIcon(tableNumber)+' Comanda — '+E(serviceLabel(tableNumber))+'</h2>'+
+      '<h2>'+(account.account_type==="Comanda QR"?'🎟️ Comanda — '+E(account.customer_name):'🪑 Comanda — Mesa '+tableNumber)+'</h2>'+
       '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
       data.orders.map(o=>
         '<div class="billOrder">'+
@@ -823,7 +849,7 @@ let selectedPayment="";
 function closeAccountForm(accountId,tableNumber,total){
   selectedPayment="PIX";
   modal(
-    '<h2>Fechar conta — '+E(serviceLabel(tableNumber))+'</h2>'+
+    '<h2>Fechar conta — Mesa '+tableNumber+'</h2>'+
     '<div class="notice">Total a receber: <b>'+R(total)+'</b></div>'+
     '<div class="notice" style="margin-top:10px">💠 Este sistema registra pagamentos somente em <b>PIX</b>. Use este fechamento manual apenas quando o PIX já tiver sido conferido fora do pagamento automático do cliente.</div>'+
     '<button class="btn" onclick="confirmCloseAccount('+accountId+','+tableNumber+')">💠 Confirmar PIX manual</button> '+
@@ -837,7 +863,7 @@ function selectPayment(method){
 
 async function confirmCloseAccount(accountId,tableNumber){
   if(!selectedPayment){alert("Escolha a forma de pagamento.");return}
-  if(!confirm("Confirmar fechamento da conta "+serviceLabel(tableNumber)+" em "+selectedPayment+"?"))return;
+  if(!confirm("Confirmar fechamento da conta da Mesa "+tableNumber+" em "+selectedPayment+"?"))return;
 
   try{
     const r=await api("/api/accounts/"+accountId+"/close",{
@@ -849,7 +875,7 @@ async function confirmCloseAccount(accountId,tableNumber){
       '<div style="text-align:center">'+
         '<div style="font-size:56px">✅</div>'+
         '<h2>Conta fechada!</h2>'+
-        '<p>'+E(serviceLabel(r.table_number))+'</p>'+
+        '<p>Mesa '+r.table_number+'</p>'+
         '<p><b>'+R(r.total)+'</b> • '+E(r.payment_method)+'</p>'+
         '<button class="btn" onclick="closeModal();dashboard()">OK</button>'+
       '</div>'
@@ -908,7 +934,7 @@ async function orders(){
       }
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
-        '<h3>#'+o.id+' — '+E(serviceLabel(o.table_number))+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
+        '<h3>#'+o.id+' — '+E(orderLabel(o))+(isNew?' <span class="newOrderBadge">NOVO</span>':'')+'</h3>'+
         '<p>'+new Date(o.created_at).toLocaleString("pt-BR")+' <span class="kitchenAge '+ageInfo.cls+'">'+ageInfo.label+'</span></p>'+
         o.items.map(i=>'<div><b>'+i.quantity+'x</b> '+E(i.name)+'</div>').join("")+
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
@@ -1693,7 +1719,7 @@ async function salesHistory(){
     const totals=a.reduce((z,x)=>{const v=Number(x.total);z.total+=v;z[x.payment_method]=(z[x.payment_method]||0)+v;return z},{total:0,PIX:0,Dinheiro:0,"Cartão":0});
     $("adminContent").innerHTML='<div class="panel"><h2>📊 Histórico de vendas</h2>'+ 
       '<div class="cashSummary"><div class="cashBox"><small>Total</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div><div class="cashBox"><small>Dinheiro</small><strong>'+R(totals.Dinheiro)+'</strong></div><div class="cashBox"><small>Cartão</small><strong>'+R(totals["Cartão"])+'</strong></div></div>'+ 
-      (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>'+E(serviceLabel(x.table_number))+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
+      (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>Mesa '+x.table_number+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
   }catch(e){alert(e.message)}
 }
 
@@ -1983,7 +2009,7 @@ async function dailyReport(date){
         '<div class="reportSection"><h3>Contas fechadas</h3>'+
           (r.accounts.length?
             '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Mesa</th><th>Horário</th><th>Pagamento</th><th>Pedidos</th><th>Valor</th></tr></thead><tbody>'+
-            r.accounts.map(a=>'<tr><td>'+E(serviceLabel(a.table_number))+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_source||a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
+            r.accounts.map(a=>'<tr><td>Mesa '+a.table_number+'</td><td>'+new Date(a.closed_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+'</td><td>'+E(a.payment_source||a.payment_method||"-")+'</td><td>'+a.order_count+'</td><td>'+R(a.total)+'</td></tr>').join("")+
             '</tbody></table></div>'
           :'<div class="empty">Nenhuma conta fechada nesta data.</div>')+
         '</div>'+
@@ -2110,7 +2136,7 @@ function exportDailyCSV(){
     ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],[],
     ["Contas fechadas"],
     ["Mesa","Fechamento","Pagamento","Pedidos","Valor"],
-    ...r.accounts.map(a=>[serviceLabel(a.table_number),new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_source||a.payment_method||"",a.order_count,a.total]),[],
+    ...r.accounts.map(a=>[a.table_number,new Date(a.closed_at).toLocaleString("pt-BR"),a.payment_source||a.payment_method||"",a.order_count,a.total]),[],
     ["Produtos vendidos"],
     ["Produto","Quantidade","Total"],
     ...r.products.map(p=>[p.name,p.quantity,p.total])
@@ -2128,9 +2154,38 @@ function exportDailyCSV(){
   URL.revokeObjectURL(url);
 }
 
+
+let qrCommandPage=0;
+async function qrCommands(page=qrCommandPage){
+  try{
+    qrCommandPage=Math.max(0,Math.min(9,Number(page)||0));
+    const statuses=await api("/api/qr-commands/status");
+    const start=qrCommandPage*20+1,end=Math.min(start+19,200);
+    let html='<div class="panel"><div class="row"><div><h2>🎟️ Comandas QR avulsas</h2><p style="color:#aaa">200 comandas reutilizáveis. Depois do PIX confirmado, a comanda fecha e volta a ficar livre.</p></div><button class="secondary" onclick="qrs()">📱 Ver mesas</button></div>'+ 
+      '<div class="notice">💡 Entregue o cartão da comanda ao cliente. Numeração disponível: <b>A001 a A200</b>.</div>'+ 
+      '<div class="row" style="margin-top:14px"><b>Mostrando A'+String(start).padStart(3,"0")+' até A'+String(end).padStart(3,"0")+'</b><div>'+ 
+      (qrCommandPage>0?'<button class="secondary" onclick="qrCommands('+(qrCommandPage-1)+')">← Anteriores</button> ':'')+
+      (qrCommandPage<9?'<button class="secondary" onclick="qrCommands('+(qrCommandPage+1)+')">Próximas →</button>':'')+'</div></div><div class="qrGrid">';
+    for(let i=start;i<=end;i++){
+      const code='A'+String(i).padStart(3,'0');
+      const st=statuses.find(x=>x.customer_name===code)||{status:'LIVRE',total:0,order_count:0};
+      const q=await api('/api/qrcode-command/'+code);
+      const busy=st.status==='EM USO';
+      html+='<div class="qrCard">'+
+        '<div class="row"><h3>🎟️ '+code+'</h3><b style="color:'+(busy?'#ff9f43':'#166534')+'">'+(busy?'EM USO':'LIVRE')+'</b></div>'+ 
+        (busy?'<p>'+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
+        '<img src="'+q.png+'" alt="QR '+code+'">'+
+        '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+      '</div>';
+    }
+    html+='</div></div>';
+    $("adminContent").innerHTML=html;
+  }catch(e){alert(e.message)}
+}
+
 async function qrs(){
   try{
-    let html='<div class="panel"><div class="row"><div><h2>📱 QR Codes das Mesas</h2><div style="color:#aaa">QRs fixos das 12 mesas físicas.</div></div><button class="btn" onclick="looseQrs()">🎟️ Comandas avulsas</button></div><div class="qrGrid">';
+    let html='<div class="panel"><h2>QR Codes das Mesas</h2><div class="qrGrid">';
     for(let i=1;i<=12;i++){
       const q=await api("/api/qrcode/"+i);
       html+=
@@ -2143,31 +2198,6 @@ async function qrs(){
     }
     html+='</div></div>';
     $("adminContent").innerHTML=html;
-  }catch(e){alert(e.message)}
-}
-
-async function looseQrs(start=1){
-  try{
-    $("adminContent").innerHTML='<div class="panel"><h2>🎟️ Comandas QR</h2><div class="notice">Carregando comandas avulsas...</div></div>';
-    const d=await api("/api/qrcodes/avulsas?start="+encodeURIComponent(start)+"&limit=20");
-    const cards=d.items.map(x=>{
-      const busy=x.status==="EM_USO";
-      return '<div class="qrCard" style="position:relative">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3 style="margin:0">🎟️ '+E(x.code)+'</h3><span class="'+(busy?'badgeOpen':'badgePaid')+'">'+(busy?'EM USO':'LIVRE')+'</span></div>'+
-        (busy&&x.opened_at?'<div style="color:#aaa;font-size:12px;margin:6px 0">Aberta em '+new Date(x.opened_at).toLocaleString("pt-BR")+'</div>':'<div style="color:#aaa;font-size:12px;margin:6px 0">Pronta para entregar ao próximo cliente</div>')+
-        '<img src="'+x.png+'" alt="QR Comanda '+E(x.code)+'">'+
-        '<a download="QR-Comanda-'+E(x.code)+'.png" href="'+x.png+'"><button class="btn">Baixar QR</button></a>'+
-      '</div>';
-    }).join("");
-    const prev=d.start>1?Math.max(1,d.start-20):null;
-    const next=d.end<d.max?d.end+1:null;
-    $("adminContent").innerHTML=
-      '<div class="panel">'+
-        '<div class="row"><div><h2>🎟️ Comandas QR avulsas</h2><div style="color:#aaa">100+ comandas reutilizáveis para dias de maior movimento. Cada QR acumula os pedidos e recebe por PIX normalmente.</div></div><button class="secondary" onclick="qrs()">📱 Ver mesas</button></div>'+
-        '<div class="notice" style="margin:14px 0">💡 Entregue o cartão da comanda ao cliente. Quando o PIX for pago, ela fecha e volta a ficar <b>LIVRE</b> para reutilização. Numeração disponível: <b>A001 a A200</b>.</div>'+
-        '<div class="row" style="margin:12px 0"><b>Mostrando '+E(d.items[0]?.code||'')+' até '+E(d.items[d.items.length-1]?.code||'')+'</b><div>'+(prev?'<button class="secondary" onclick="looseQrs('+prev+')">← Anteriores</button> ':'')+(next?'<button class="secondary" onclick="looseQrs('+next+')">Próximas →</button>':'')+'</div></div>'+
-        '<div class="qrGrid">'+cards+'</div>'+
-      '</div>';
   }catch(e){alert(e.message)}
 }
 
