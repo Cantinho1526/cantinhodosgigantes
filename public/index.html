@@ -822,6 +822,33 @@ async function accounts(){
         '</div>'
       ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
       '</div>';
+
+    // V78: mantém as Comandas QR avulsas visíveis logo abaixo das comandas abertas.
+    // Isso evita que a seção desapareça quando não existe nenhuma comanda aberta.
+    try{
+      const statuses=await api("/api/qr-commands/status");
+      let qrHtml='<div class="panel" style="margin-top:18px"><div class="row"><div><h2>🎟️ Comandas QR avulsas</h2><p style="color:#aaa">200 comandas reutilizáveis. Depois do PIX confirmado ou do cancelamento do último pedido, a comanda volta a ficar livre.</p></div><button class="secondary" onclick="qrs()">📱 Ver mesas</button></div>'+ 
+        '<div class="notice">💡 Entregue o cartão da comanda ao cliente. Numeração disponível: <b>A001 a A200</b>.</div>'+ 
+        '<div class="row" style="margin-top:14px"><b>Mostrando A001 até A020</b><button class="secondary" onclick="qrCommands(1)">Próximas →</button></div><div class="qrGrid">';
+      for(let i=1;i<=20;i++){
+        const code='A'+String(i).padStart(3,'0');
+        const st=statuses.find(x=>x.customer_name===code)||{status:'LIVRE',total:0,order_count:0};
+        const q=await api('/api/qrcode-command/'+code);
+        const busy=st.status==='EM USO';
+        qrHtml+='<div class="qrCard">'+
+          '<div class="row"><h3>🎟️ '+code+'</h3><b style="color:'+(busy?'#ff9f43':'#166534')+'">'+(busy?'EM USO':'LIVRE')+'</b></div>'+ 
+          (busy?'<p>'+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
+          '<img src="'+q.png+'" alt="QR '+code+'">'+
+          '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+        '</div>';
+      }
+      qrHtml+='</div></div>';
+      $("adminContent").insertAdjacentHTML("beforeend",qrHtml);
+    }catch(qrError){
+      console.error("Erro ao exibir Comandas QR avulsas:",qrError);
+      $("adminContent").insertAdjacentHTML("beforeend",'<div class="panel" style="margin-top:18px"><div class="row"><h2>🎟️ Comandas QR avulsas</h2><button class="btn" onclick="qrCommands(0)">Abrir comandas QR</button></div></div>');
+    }
+
     await refreshDashboardStats();
   }catch(e){alert(e.message)}
 }
