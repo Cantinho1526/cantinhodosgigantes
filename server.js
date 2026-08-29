@@ -33,8 +33,6 @@ app.use(express.json({limit:"1mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const ADMIN_SESSION_HOURS=12;
-const LOOSE_ACCOUNT_BASE=1000;
-const LOOSE_ACCOUNT_MAX=200;
 
 function createAdminToken(){
   const payload={
@@ -237,15 +235,29 @@ function validTableAccess(tableNumber,token){
   return a.length===b.length && crypto.timingSafeEqual(a,b);
 }
 
-function isLooseAccountNumber(tableNumber){
-  return Number.isInteger(Number(tableNumber)) && Number(tableNumber)>LOOSE_ACCOUNT_BASE && Number(tableNumber)<=LOOSE_ACCOUNT_BASE+LOOSE_ACCOUNT_MAX;
-}
-function looseAccountCode(tableNumber){
-  const n=Number(tableNumber)-LOOSE_ACCOUNT_BASE;
+function normalizeQrCommandCode(value){
+  const m=String(value||"").trim().toUpperCase().match(/^A(\d{3})$/);
+  if(!m)return null;
+  const n=Number(m[1]);
+  if(!Number.isInteger(n)||n<1||n>200)return null;
   return "A"+String(n).padStart(3,"0");
 }
-function serviceLabel(tableNumber){
-  return isLooseAccountNumber(tableNumber)?"Comanda "+looseAccountCode(tableNumber):"Mesa "+Number(tableNumber);
+function commandCodeToTableNumber(code){
+  const normalized=normalizeQrCommandCode(code);
+  if(!normalized)return null;
+  return 1000+Number(normalized.slice(1));
+}
+function commandAccessToken(code){
+  const normalized=normalizeQrCommandCode(code);
+  if(!normalized)return "";
+  return crypto.createHmac("sha256",TABLE_QR_SECRET).update("command:"+normalized).digest("hex").slice(0,32);
+}
+function validCommandAccess(code,token){
+  const expected=commandAccessToken(code);
+  if(!expected)return false;
+  const a=Buffer.from(String(token||""));
+  const b=Buffer.from(expected);
+  return a.length===b.length && crypto.timingSafeEqual(a,b);
 }
 
 async function mercadoPago(pathname,options={}){
@@ -438,6 +450,29 @@ async function getOrCreateOpenAccount(client,tableNumber){
   return r.rows[0];
 }
 
+
+async function getOrCreateOpenCommandAccount(client,code){
+  const normalized=normalizeQrCommandCode(code);
+  if(!normalized)throw Error("Comanda QR inválida.");
+  const tableNumber=commandCodeToTableNumber(normalized);
+  await client.query("select pg_advisory_xact_lock($1)",[tableNumber]);
+  let r=await client.query(
+    `select * from table_accounts
+     where table_number=$1 and status='Aberta' and account_type='Comanda QR'
+     order by id desc limit 1
+     for update`,
+    [tableNumber]
+  );
+  if(r.rowCount)return r.rows[0];
+  r=await client.query(
+    `insert into table_accounts(table_number,status,account_type,customer_name)
+     values($1,'Aberta','Comanda QR',$2)
+     returning *`,
+    [tableNumber,normalized]
+  );
+  return r.rows[0];
+}
+
 const adminLoginAttempts=new Map();
 function adminLoginKey(req){
   return String(req.headers["x-forwarded-for"]||req.ip||"unknown").split(",")[0].trim();
@@ -500,8 +535,10 @@ app.get("/api/menu",async(req,res)=>{
 
 app.post("/api/orders",async(req,res)=>{
   const {table,items,observation=""}=req.body;
-  const tableNumber=Number(table);
   const accessToken=String(req.body.access_token||req.body.token||"");
+  const commandCode=normalizeQrCommandCode(req.body.command_code||req.body.command);
+  const isCommand=Boolean(commandCode);
+  const tableNumber=isCommand?commandCodeToTableNumber(commandCode):Number(table);
 
   if(!Number.isInteger(tableNumber)||tableNumber<1||!Array.isArray(items)||!items.length){
     return res.status(400).json({error:"Pedido inválido."});
@@ -509,18 +546,20 @@ app.post("/api/orders",async(req,res)=>{
   if(items.length>50){
     return res.status(400).json({error:"Há itens demais neste pedido."});
   }
-  if(!validTableAccess(tableNumber,accessToken)){
-    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa/comanda."});
-  }
-  if(!isLooseAccountNumber(tableNumber)){
-    const exists=(await pool.query("select 1 from tables_restaurant where number=$1 limit 1",[tableNumber])).rowCount;
-    if(!exists)return res.status(404).json({error:"Mesa não cadastrada."});
+  if(isCommand){
+    if(!validCommandAccess(commandCode,accessToken)){
+      return res.status(403).json({error:"QR Code da comanda inválido. Escaneie novamente o cartão da comanda."});
+    }
+  }else if(!validTableAccess(tableNumber,accessToken)){
+    return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
   }
 
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const account=await getOrCreateOpenAccount(c,tableNumber);
+    const account=isCommand
+      ? await getOrCreateOpenCommandAccount(c,commandCode)
+      : await getOrCreateOpenAccount(c,tableNumber);
 
     let total=0;
     const normalized=[];
@@ -567,13 +606,13 @@ app.post("/api/orders",async(req,res)=>{
         await c.query(
           `insert into stock_movements(product_id,movement_type,quantity,previous_quantity,new_quantity,note)
            values($1,'Venda',$2,$3,$4,$5)`,
-          [x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+serviceLabel(tableNumber)]
+          [x.p.id,x.quantity,previous,next,'Pedido #'+order.id+' • '+(isCommand?'Comanda '+commandCode:'Mesa '+tableNumber)]
         );
       }
     }
 
     await c.query("commit");
-    res.json({ok:true,id:order.id,account_id:account.id,total});
+    res.json({ok:true,id:order.id,account_id:account.id,total,account_type:isCommand?'Comanda QR':'Mesa',command_code:isCommand?commandCode:null,table_number:tableNumber});
   }catch(e){
     await c.query("rollback");
     console.error(e);
@@ -856,15 +895,49 @@ app.get("/api/client/account/:table",async(req,res)=>{
   }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar sua comanda."})}
 });
 
+
+app.get("/api/client/command/:code",async(req,res)=>{
+  try{
+    const code=normalizeQrCommandCode(req.params.code);
+    if(!code||!validCommandAccess(code,req.query.t)){
+      return res.status(403).json({error:"Acesso inválido à comanda QR."});
+    }
+    const tableNumber=commandCodeToTableNumber(code);
+    const account=(await pool.query(
+      `select * from table_accounts
+       where table_number=$1 and status='Aberta' and account_type='Comanda QR'
+       order by id desc limit 1`,
+      [tableNumber]
+    )).rows[0];
+    if(!account)return res.json({open:false,command_code:code,orders:[],total:0});
+    const orders=(await pool.query(
+      `select id,status,observation,total,created_at from orders where account_id=$1 order by id`,
+      [account.id]
+    )).rows;
+    let total=0;
+    for(const o of orders){
+      o.items=(await pool.query(
+        `select product_name name,quantity,unit_price from order_items where order_id=$1 order by id`,
+        [o.id]
+      )).rows;
+      if(o.status!=="Cancelado")total+=Number(o.total);
+    }
+    res.json({open:true,account:{id:account.id,account_type:account.account_type,customer_name:code},orders,total});
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar sua comanda QR."})}
+});
+
 app.post("/api/client/pix",async(req,res)=>{
-  const tableNumber=Number(req.body.table);
+  const commandCode=normalizeQrCommandCode(req.body.command_code||req.body.command);
+  const isCommand=Boolean(commandCode);
+  const tableNumber=isCommand?commandCodeToTableNumber(commandCode):Number(req.body.table);
   const token=String(req.body.token||"");
   // O cliente não precisa informar e-mail para pagar com PIX.
   // O Mercado Pago exige payer.email na criação da order, então usamos
   // um e-mail técnico interno que não aparece para o cliente.
   const email="pix@cantinhodosgigantes.com";
 
-  if(!Number.isInteger(tableNumber)||tableNumber<1||!validTableAccess(tableNumber,token)){
+  if(!Number.isInteger(tableNumber)||tableNumber<1||
+     (isCommand?!validCommandAccess(commandCode,token):!validTableAccess(tableNumber,token))){
     return res.status(403).json({error:"Acesso inválido à comanda."});
   }
 
@@ -875,11 +948,14 @@ app.post("/api/client/pix",async(req,res)=>{
     }
 
     const account=(await pool.query(
-      `select * from table_accounts where table_number=$1 and status='Aberta' order by id desc limit 1`,
-      [tableNumber]
+      `select * from table_accounts
+       where table_number=$1 and status='Aberta'
+         and account_type=$2
+       order by id desc limit 1`,
+      [tableNumber,isCommand?'Comanda QR':'Mesa']
     )).rows[0];
 
-    if(!account)return res.status(404).json({error:"Não há comanda aberta nesta mesa."});
+    if(!account)return res.status(404).json({error:isCommand?"Não há pedidos abertos nesta comanda.":"Não há comanda aberta nesta mesa."});
     if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
 
     const comandaTotal=Number((await pool.query(
@@ -965,8 +1041,19 @@ app.post("/api/client/pix",async(req,res)=>{
 
 app.get("/api/client/pix/:id/status",async(req,res)=>{
   try{
-    const p=(await pool.query(`select * from pix_payments where id=$1`,[Number(req.params.id)])).rows[0];
-    if(!p||!validTableAccess(p.table_number,req.query.t)){
+    const p=(await pool.query(
+      `select pp.*,a.account_type,a.customer_name
+       from pix_payments pp
+       left join table_accounts a on a.id=pp.account_id
+       where pp.id=$1`,
+      [Number(req.params.id)]
+    )).rows[0];
+    const pixTokenOk=p && (
+      p.account_type==='Comanda QR'
+        ? validCommandAccess(p.customer_name,req.query.t)
+        : validTableAccess(p.table_number,req.query.t)
+    );
+    if(!pixTokenOk){
       return res.status(404).json({error:"Pagamento não encontrado."});
     }
 
@@ -1439,36 +1526,6 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao salvar configurações."})}
 });
 
-app.get("/api/qrcodes/avulsas",requireAdmin,async(req,res)=>{
-  try{
-    const start=Math.max(1,Math.min(LOOSE_ACCOUNT_MAX,Math.floor(Number(req.query.start)||1)));
-    const limit=Math.max(1,Math.min(20,Math.floor(Number(req.query.limit)||20)));
-    const end=Math.min(LOOSE_ACCOUNT_MAX,start+limit-1);
-    const virtuals=[];
-    for(let n=start;n<=end;n++)virtuals.push(LOOSE_ACCOUNT_BASE+n);
-
-    const openRows=(await pool.query(`
-      select table_number,id,opened_at
-      from table_accounts
-      where status='Aberta' and table_number = any($1::int[])
-    `,[virtuals])).rows;
-    const openMap=new Map(openRows.map(x=>[Number(x.table_number),x]));
-    const items=[];
-    for(let n=start;n<=end;n++){
-      const tableNumber=LOOSE_ACCOUNT_BASE+n;
-      const code=looseAccountCode(tableNumber);
-      const url=`${req.protocol}://${req.get("host")}/?mesa=${encodeURIComponent(tableNumber)}&t=${tableAccessToken(tableNumber)}&tipo=avulsa&comanda=${encodeURIComponent(code)}`;
-      const png=await QRCode.toDataURL(url,{width:520,margin:2});
-      const open=openMap.get(tableNumber);
-      items.push({number:n,code,table_number:tableNumber,url,png,status:open?"EM_USO":"LIVRE",account_id:open?.id||null,opened_at:open?.opened_at||null});
-    }
-    res.json({start,end,max:LOOSE_ACCOUNT_MAX,items});
-  }catch(e){
-    console.error(e);
-    res.status(500).json({error:"Erro ao gerar comandas QR."});
-  }
-});
-
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
   try{
     const tableNumber=Number(req.params.table);
@@ -1483,6 +1540,39 @@ app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao gerar QR Code."})}
 });
 
+
+
+app.get("/api/qrcode-command/:code",requireAdmin,async(req,res)=>{
+  try{
+    const code=normalizeQrCommandCode(req.params.code);
+    if(!code)return res.status(400).json({error:"Comanda inválida. Use A001 até A200."});
+    const url=`${req.protocol}://${req.get("host")}/?comanda=${encodeURIComponent(code)}&t=${commandAccessToken(code)}`;
+    const png=await QRCode.toDataURL(url,{width:700,margin:2});
+    res.json({code,url,png});
+  }catch(e){res.status(500).json({error:"Erro ao gerar QR Code da comanda."})}
+});
+
+app.get("/api/qr-commands/status",requireAdmin,async(req,res)=>{
+  try{
+    const rows=(await pool.query(`
+      select a.id,a.table_number,a.customer_name,a.opened_at,
+             coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
+             count(o.id) filter(where o.status<>'Cancelado')::int order_count
+      from table_accounts a
+      left join orders o on o.account_id=a.id
+      where a.status='Aberta' and a.account_type='Comanda QR'
+      group by a.id
+    `)).rows;
+    const byCode={};
+    for(const r of rows)byCode[r.customer_name]={...r,status:"EM USO"};
+    const result=[];
+    for(let i=1;i<=200;i++){
+      const code="A"+String(i).padStart(3,"0");
+      result.push(byCode[code]||{customer_name:code,status:"LIVRE",total:0,order_count:0});
+    }
+    res.json(result);
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar comandas QR."})}
+});
 
 // CAIXA E HISTÓRICO DE VENDAS
 app.get("/api/sales/history",requireAdmin,async(req,res)=>{
