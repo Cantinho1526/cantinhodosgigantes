@@ -417,6 +417,10 @@ function noOpenCashMessage(){
   return "Abra o caixa antes de receber ou fechar uma conta. Nenhum pagamento pode ser registrado com o caixa fechado.";
 }
 
+function noOpenCashOrderMessage(){
+  return "O caixa está fechado. Aguarde a abertura do caixa para enviar pedidos.";
+}
+
 async function getOrCreateOpenAccount(client,tableNumber){
   // Serializa a criação da comanda por mesa para evitar duas comandas abertas
   // quando dois pedidos chegam praticamente ao mesmo tempo.
@@ -557,6 +561,19 @@ app.post("/api/orders",async(req,res)=>{
   const c=await pool.connect();
   try{
     await c.query("begin");
+
+    // Pedidos só podem nascer enquanto houver um Caixa PIX aberto.
+    // Usa o mesmo lock financeiro do fechamento do caixa para impedir a corrida:
+    // o caixa não pode fechar entre esta validação e a gravação do pedido.
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+    const cashSession=await getOpenCashSession(c);
+    if(!cashSession){
+      const err=Error(noOpenCashOrderMessage());
+      err.status=409;
+      err.cash_closed=true;
+      throw err;
+    }
+
     const account=isCommand
       ? await getOrCreateOpenCommandAccount(c,commandCode)
       : await getOrCreateOpenAccount(c,tableNumber);
@@ -616,7 +633,11 @@ app.post("/api/orders",async(req,res)=>{
   }catch(e){
     await c.query("rollback");
     console.error(e);
-    res.status(400).json({error:e.message||"Não foi possível criar o pedido."});
+    const status=Number(e.status)||400;
+    res.status(status).json({
+      error:e.message||"Não foi possível criar o pedido.",
+      ...(e.cash_closed?{cash_closed:true}:{})
+    });
   }finally{
     c.release();
   }
@@ -1319,6 +1340,14 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
   const c=await pool.connect();
   try{
     await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+    const cashSession=await getOpenCashSession(c);
+    if(!cashSession){
+      const err=Error(noOpenCashOrderMessage());
+      err.status=409;
+      err.cash_closed=true;
+      throw err;
+    }
     const account=(await c.query(`select * from table_accounts where id=$1 and status='Aberta' for update`,[Number(req.params.id)])).rows[0];
     if(!account)throw Error("Comanda aberta não encontrada.");
     let total=0; const normalized=[];
@@ -1342,7 +1371,12 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
       }
     }
     await c.query("commit");res.json({ok:true,id:order.id,total});
-  }catch(e){try{await c.query("rollback")}catch(_e){};console.error(e);res.status(400).json({error:e.message||"Erro ao lançar pedido."})}
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    const status=Number(e.status)||400;
+    res.status(status).json({error:e.message||"Erro ao lançar pedido.",...(e.cash_closed?{cash_closed:true}:{})});
+  }
   finally{c.release()}
 });
 
