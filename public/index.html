@@ -866,6 +866,10 @@ async function accounts(){
       ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
       '</div>';
 
+    // V81: atualiza os indicadores imediatamente. A geração dos 20 QRs abaixo pode
+    // levar alguns segundos; o topo não deve ficar mostrando um valor antigo enquanto isso.
+    await refreshDashboardStats();
+
     // V78: mantém as Comandas QR avulsas visíveis logo abaixo das comandas abertas.
     // Isso evita que a seção desapareça quando não existe nenhuma comanda aberta.
     try{
@@ -1023,8 +1027,11 @@ function kitchenAgeInfo(createdAt){
 async function orders(){
   try{
     const a=await api("/api/orders");
-    const active=a.filter(o=>o.status!=="Entregue"&&o.status!=="Cancelado");
-    const finished=a.filter(o=>o.status==="Entregue"||o.status==="Cancelado");
+    // V81: uma conta já fechada/paga não pode continuar como trabalho ativo da cozinha,
+    // mesmo que um registro histórico antigo ainda tenha status Recebido/Em preparo/Pronto.
+    const accountClosed=o=>o.account_status==="Fechada";
+    const active=a.filter(o=>!accountClosed(o)&&o.status!=="Entregue"&&o.status!=="Cancelado");
+    const finished=a.filter(o=>accountClosed(o)||o.status==="Entregue"||o.status==="Cancelado");
 
     const card=o=>{
       const isNew=Boolean(pendingOrderById(o.id));
@@ -1043,16 +1050,19 @@ async function orders(){
         : '';
 
       let actions='';
-      if(o.status==="Recebido"){
-        actions='<button class="kitchenAccept" onclick="acceptOrder('+o.id+')">✅ ACEITAR PEDIDO</button>';
-      }else if(o.status==="Em preparo"){
-        actions='<button class="kitchenReady" onclick="kitchenStatus('+o.id+',\'Pronto\')">🍳 MARCAR COMO PRONTO</button>';
-      }else if(o.status==="Pronto"){
-        actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
-      }
+      // Contas fechadas são somente histórico: nunca podem voltar a exibir ações operacionais.
+      if(!accountClosed(o)){
+        if(o.status==="Recebido"){
+          actions='<button class="kitchenAccept" onclick="acceptOrder('+o.id+')">✅ ACEITAR PEDIDO</button>';
+        }else if(o.status==="Em preparo"){
+          actions='<button class="kitchenReady" onclick="kitchenStatus('+o.id+',\'Pronto\')">🍳 MARCAR COMO PRONTO</button>';
+        }else if(o.status==="Pronto"){
+          actions='<button class="kitchenDeliver" onclick="kitchenStatus('+o.id+',\'Entregue\')">✅ ENTREGUE</button>';
+        }
 
-      if(o.status!=="Entregue" && o.status!=="Cancelado"){
-        actions += '<button class="secondary" onclick="archiveKitchenOrder('+o.id+')">🧹 REMOVER DA FILA</button>';
+        if(o.status!=="Entregue" && o.status!=="Cancelado"){
+          actions += '<button class="secondary" onclick="archiveKitchenOrder('+o.id+')">🧹 REMOVER DA FILA</button>';
+        }
       }
 
       return '<div class="order '+(isNew?'newOrder':'')+'">'+
@@ -1062,7 +1072,7 @@ async function orders(){
         (o.observation?'<p><b>Obs.:</b> '+E(o.observation)+'</p>':'')+
         '<h3>'+R(o.total)+'</h3>'+
         paymentBadge+
-        '<span class="orderStatus '+statusClass+'">'+E(o.status)+'</span>'+
+        '<span class="orderStatus '+statusClass+'">'+E(accountClosed(o)?"Pago / encerrado":o.status)+'</span>'+
         (actions?'<div class="kitchenActions">'+actions+'</div>':'')+
       '</div>';
     };
