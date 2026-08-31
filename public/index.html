@@ -213,6 +213,20 @@ textarea{min-height:88px}
 .ageYesterday{background:#4a3c00;color:#ffe477;border:1px solid #806800}
 .ageRecent{background:#4a2600;color:#ffc078;border:1px solid #8b4b00}
 .ageOld{background:#4b1212;color:#ff9d9d;border:1px solid #8d2424}
+
+/* V84: navegação administrativa compacta somente no celular */
+.adminMoreWrap{display:none}
+.adminMoreMenu{display:none}
+@media(max-width:760px){
+  .adminTabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;overflow:visible;margin:14px 0;padding:0}
+  .adminTabs>button{min-width:0;padding:10px 5px;font-size:12px;white-space:normal;line-height:1.2}
+  .adminTabs .mobileExtra{display:none}
+  .adminMoreWrap{display:block;position:relative}
+  .adminMoreWrap>button{width:100%;height:100%;background:#181818;color:#ddd;border:1px solid #333}
+  .adminMoreMenu{position:absolute;right:0;top:calc(100% + 8px);z-index:45;width:min(290px,calc(100vw - 26px));background:#151515;border:1px solid #514000;border-radius:14px;padding:8px;box-shadow:0 16px 38px #000c}
+  .adminMoreMenu.open{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .adminMoreMenu button{background:#242424;color:#fff;border:1px solid #353535;text-align:left;padding:11px 10px;font-size:13px}
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -796,20 +810,31 @@ async function dashboard(){
         '<div class="stat"><small>Em aberto</small><strong id="statOpenTotal">'+R(s.open_total)+'</strong></div>'+
         '<div class="stat"><small>Recebido</small><strong id="statPaidTotal">'+R(s.paid_total)+'</strong></div>'+
       '</div>'+
-      '<div class="tabs">'+
+      '<div class="tabs adminTabs">'+
         '<button onclick="accounts()">🪑 Comandas</button>'+
         '<button onclick="cash()">💰 Caixa</button>'+
         '<button onclick="salesHistory()">📊 Histórico</button>'+
         '<button onclick="dailyReport()">📅 Relatório</button>'+
-        '<button onclick="periodReport()">📆 Período</button>'+
-        '<button onclick="profitPanel()">💹 Lucro</button>'+
-        '<button onclick="orders()">🧾 Pedidos</button>'+
-        '<button onclick="products()">🍽️ Cardápio</button>'+
-        '<button onclick="stock()">📦 Estoque</button>'+
-        '<button onclick="stockHistory()">📋 Mov. Estoque</button>'+
-        '<button onclick="settings()">⚙️ Configurações</button>'+
-        '<button onclick="qrs()">📱 QR Mesas</button>'+
-        '<button onclick="qrCommands()">🎟️ Comandas QR</button>'+
+        '<button class="mobileExtra" onclick="periodReport()">📆 Período</button>'+
+        '<button class="mobileExtra" onclick="profitPanel()">💹 Lucro</button>'+
+        '<button class="mobileExtra" onclick="orders()">🧾 Pedidos</button>'+
+        '<button class="mobileExtra" onclick="products()">🍽️ Cardápio</button>'+
+        '<button class="mobileExtra" onclick="stock()">📦 Estoque</button>'+
+        '<button class="mobileExtra" onclick="stockHistory()">📋 Mov. Estoque</button>'+
+        '<button class="mobileExtra" onclick="settings()">⚙️ Configurações</button>'+
+        '<button class="mobileExtra" onclick="qrs()">📱 QR Mesas</button>'+
+        '<button class="mobileExtra" onclick="qrCommands()">🎟️ Comandas QR</button>'+
+        '<div class="adminMoreWrap"><button onclick="toggleAdminMore(event)">•••<br>Mais</button><div id="adminMoreMenu" class="adminMoreMenu">'+
+          '<button onclick="closeAdminMore();periodReport()">📆 Período</button>'+
+          '<button onclick="closeAdminMore();profitPanel()">💹 Lucro</button>'+
+          '<button onclick="closeAdminMore();orders()">🧾 Pedidos</button>'+
+          '<button onclick="closeAdminMore();products()">🍽️ Cardápio</button>'+
+          '<button onclick="closeAdminMore();stock()">📦 Estoque</button>'+
+          '<button onclick="closeAdminMore();stockHistory()">📋 Mov. Estoque</button>'+
+          '<button onclick="closeAdminMore();settings()">⚙️ Configurações</button>'+
+          '<button onclick="closeAdminMore();qrs()">📱 QR Mesas</button>'+
+          '<button onclick="closeAdminMore();qrCommands()">🎟️ Comandas QR</button>'+
+        '</div></div>'+
       '</div>'+
       '<div id="adminContent"></div>';
     startOrderWatch();
@@ -818,6 +843,20 @@ async function dashboard(){
     adminToken="";sessionStorage.removeItem("cg_admin_token");adminLogin();
   }
 }
+
+function toggleAdminMore(ev){
+  if(ev)ev.stopPropagation();
+  const m=$("adminMoreMenu");
+  if(m)m.classList.toggle("open");
+}
+function closeAdminMore(){
+  const m=$("adminMoreMenu");
+  if(m)m.classList.remove("open");
+}
+document.addEventListener("click",e=>{
+  const wrap=e.target&&e.target.closest?e.target.closest(".adminMoreWrap"):null;
+  if(!wrap)closeAdminMore();
+});
 
 function logout(){
   stopOrderWatch();
