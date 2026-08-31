@@ -1497,7 +1497,30 @@ async function restoreProduct(id){
   }catch(e){alert(e.message)}
 }
 
-let stockFilter="all";
+let stockFilter="all",stockSearch="";
+
+function normalizeStockSearch(value){
+  return String(value||"")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .trim();
+}
+
+function filterStockRows(value){
+  stockSearch=String(value||"");
+  const q=normalizeStockSearch(stockSearch);
+  const rows=[...document.querySelectorAll(".stockProductRow")];
+  let shown=0;
+  rows.forEach(row=>{
+    const hay=String(row.dataset.search||"");
+    const ok=!q||hay.includes(q);
+    row.style.display=ok?"":"none";
+    if(ok)shown++;
+  });
+  const empty=$("stockSearchEmpty");
+  if(empty)empty.classList.toggle("hidden",shown>0||rows.length===0);
+}
 
 async function stock(filter){
   try{
@@ -1514,6 +1537,9 @@ async function stock(filter){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><div><h2>📦 Estoque e custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição • '+noCost.length+' sem custo cadastrado</div></div><div style="text-align:right"><div style="color:#aaa;font-size:13px">Valor do estoque controlado</div><b style="color:#ffd34d;font-size:22px">'+R(inventoryValue)+'</b></div></div>'+
+        '<div class="noPrint" style="margin:14px 0 10px">'+
+          '<input id="stockSearch" type="search" value="'+E(stockSearch)+'" placeholder="🔎 Buscar produto no estoque..." oninput="filterStockRows(this.value)" autocomplete="off" style="width:100%;min-height:46px;border:1px solid #5b4600;background:#0d0d0d;color:#fff;border-radius:12px;padding:11px 14px;font-size:16px">'+
+        '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0" class="noPrint">'+
           '<button class="'+(stockFilter==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
           '<button class="'+(stockFilter==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+noCost.length+')</button>'+
@@ -1527,7 +1553,8 @@ async function stock(filter){
           const price=Number(p.price||0), cost=Number(p.cost_price||0);
           const margin=price>0&&cost>0?((price-cost)/price*100):null;
           const value=p.stock_control?q*cost:0;
-          return '<div class="productRow" style="gap:16px">'+
+          const searchText=normalizeStockSearch([p.name,p.category].join(" "));
+          return '<div class="productRow stockProductRow" data-search="'+E(searchText)+'" style="gap:16px">'+
             '<div style="min-width:240px;flex:1"><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+
             '<div style="display:grid;grid-template-columns:repeat(4,minmax(105px,1fr));gap:8px;flex:2;min-width:520px">'+
               '<div><small style="color:#999">Estoque atual</small><div style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</div></div>'+
@@ -1538,8 +1565,13 @@ async function stock(filter){
             '<div class="productActions" style="align-items:center"><button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button></div>'+
           '</div>';
         }).join(""):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
+        '<div id="stockSearchEmpty" class="empty hidden">🔎 Nenhum produto encontrado.</div>'+
       '</div>';
-    requestAnimationFrame(()=>{const el=$("adminContent");if(el)el.scrollIntoView({behavior:"auto",block:"start"});});
+    requestAnimationFrame(()=>{
+      filterStockRows(stockSearch);
+      const el=$("adminContent");
+      if(el)el.scrollIntoView({behavior:"auto",block:"start"});
+    });
   }catch(e){alert(e.message)}
 }
 
