@@ -849,22 +849,69 @@ function accountDisplayLabel(x){
     : "Mesa "+String((x&&x.table_number)!=null?x.table_number:"");
 }
 
-async function accounts(){
-  try{
-    const a=await api("/api/accounts");
-    const open=a.filter(x=>x.status==="Aberta");
-    $("adminContent").innerHTML=
-      '<div class="panel"><div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
-      (open.length?'<div class="accountGrid">'+open.map(x=>
+let accountSearch="",accountTypeFilter="all";
+function normalizeAccountSearch(v){
+  return String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+}
+function filterOpenAccounts(open){
+  const q=normalizeAccountSearch(accountSearch);
+  return open.filter(x=>{
+    if(accountTypeFilter==="mesa"&&x.account_type==="Comanda QR")return false;
+    if(accountTypeFilter==="qr"&&x.account_type!=="Comanda QR")return false;
+    if(!q)return true;
+    const label=x.account_type==="Comanda QR"
+      ? "comanda "+String(x.customer_name||"")
+      : "mesa "+String(x.table_number??"");
+    const hay=normalizeAccountSearch(label+" "+String(x.customer_name||"")+" "+String(x.table_number??""));
+    return hay.includes(q);
+  });
+}
+function renderOpenAccountList(open){
+  const filtered=filterOpenAccounts(open);
+  const root=$("openAccountsResults");
+  const count=$("openAccountsCount");
+  if(count)count.textContent=filtered.length+" de "+open.length+" aberta(s)";
+  if(!root)return;
+  root.innerHTML=filtered.length
+    ? '<div class="accountGrid">'+filtered.map(x=>
         '<div class="accountCard open">'+
           '<span class="badgeOpen">ABERTA</span>'+
-          '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name):'Mesa '+x.table_number)+'</h3>'+
+          '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name):'🪑 Mesa '+x.table_number)+'</h3>'+
           '<div>'+x.order_count+' pedido(s)</div>'+
           '<div class="accountTotal">'+R(x.total)+'</div>'+
           '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
         '</div>'
-      ).join("")+'</div>':'<div class="empty">Nenhuma mesa com comanda aberta.</div>')+
+      ).join("")+'</div>'
+    : '<div class="empty">Nenhuma comanda encontrada com esse filtro.</div>';
+}
+function setAccountTypeFilter(type,open){
+  accountTypeFilter=type;
+  ["all","mesa","qr"].forEach(k=>{
+    const b=$("accountFilter_"+k);
+    if(b)b.className=(k===type?"btn":"secondary");
+  });
+  renderOpenAccountList(open);
+}
+async function accounts(){
+  try{
+    const a=await api("/api/accounts");
+    const open=a.filter(x=>x.status==="Aberta");
+    window.__openAccounts=open;
+    $("adminContent").innerHTML=
+      '<div class="panel">'+
+        '<div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
+        '<div style="display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:center;margin:12px 0 14px">'+
+          '<input id="accountSearchInput" placeholder="🔎 Buscar mesa ou comanda..." value="'+E(accountSearch)+'" oninput="accountSearch=this.value;renderOpenAccountList(window.__openAccounts||[])">'+
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+            '<button id="accountFilter_all" class="'+(accountTypeFilter==="all"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'all\',window.__openAccounts||[])">Todas</button>'+
+            '<button id="accountFilter_mesa" class="'+(accountTypeFilter==="mesa"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'mesa\',window.__openAccounts||[])">🪑 Mesas</button>'+
+            '<button id="accountFilter_qr" class="'+(accountTypeFilter==="qr"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'qr\',window.__openAccounts||[])">🎟️ Comandas QR</button>'+
+          '</div>'+
+        '</div>'+
+        '<div id="openAccountsCount" style="color:#aaa;margin-bottom:10px"></div>'+
+        '<div id="openAccountsResults"></div>'+
       '</div>';
+    renderOpenAccountList(open);
 
     // V81: atualiza os indicadores imediatamente. A geração dos 20 QRs abaixo pode
     // levar alguns segundos; o topo não deve ficar mostrando um valor antigo enquanto isso.
