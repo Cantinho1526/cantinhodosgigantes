@@ -29,7 +29,7 @@ const pool=new Pool({
   ssl:{rejectUnauthorized:false}
 });
 
-app.use(express.json({limit:"1mb"}));
+app.use(express.json({limit:"2mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const ADMIN_SESSION_HOURS=12;
@@ -70,6 +70,8 @@ async function init(){
       name text not null,
       welcome text not null
     );
+
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_data text NOT NULL DEFAULT '';
 
     CREATE TABLE IF NOT EXISTS categories(
       id serial primary key,
@@ -516,7 +518,7 @@ app.post("/api/admin/login",(req,res)=>{
 
 app.get("/api/menu",async(req,res)=>{
   try{
-    const settings=(await pool.query("select name,welcome from settings where id=1")).rows[0];
+    const settings=(await pool.query("select name,welcome,logo_data from settings where id=1")).rows[0];
     const categories=(await pool.query(`
       select c.id,c.name
       from categories c
@@ -1645,12 +1647,22 @@ app.post("/api/categories",requireAdmin,async(req,res)=>{
 
 app.put("/api/settings",requireAdmin,async(req,res)=>{
   try{
+    const logoData=String(req.body.logo_data||"");
+    if(logoData && !/^data:image\/(png|jpeg|webp);base64,/i.test(logoData)){
+      return res.status(400).json({error:"Formato de logo inválido."});
+    }
+    if(logoData.length>750000){
+      return res.status(400).json({error:"A logo ficou muito grande. Escolha uma imagem menor."});
+    }
     await pool.query(
-      "update settings set name=$1,welcome=$2 where id=1",
-      [String(req.body.name||"Cantinho dos Gigantes"),String(req.body.welcome||"")]
+      "update settings set name=$1,welcome=$2,logo_data=$3 where id=1",
+      [String(req.body.name||"Cantinho dos Gigantes"),String(req.body.welcome||""),logoData]
     );
     res.json({ok:true});
-  }catch(e){res.status(500).json({error:"Erro ao salvar configurações."})}
+  }catch(e){
+    console.error(e);
+    res.status(500).json({error:"Erro ao salvar configurações."});
+  }
 });
 
 app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
