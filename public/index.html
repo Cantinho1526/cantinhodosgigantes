@@ -376,6 +376,51 @@ body.clientModeV86 .btn{border-radius:999px}
   .clientHeroCopy h1{font-size:20px}
 }
 
+
+/* V87 - imagem personalizada do topo ocupa a área de marca inteira */
+.clientHeroV86.customTopImage{
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:24px;
+  min-height:180px;
+}
+.clientHeroBrandImageWrap{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  padding-right:24px;
+  border-right:1px solid #765b00;
+}
+.clientHeroBrandImage{
+  display:block;
+  width:min(760px,100%);
+  max-height:145px;
+  object-fit:contain;
+  object-position:left center;
+  filter:drop-shadow(0 5px 12px #000);
+}
+@media(max-width:760px){
+  .clientHeroV86.customTopImage{
+    grid-template-columns:1fr;
+    gap:10px;
+  }
+  .clientHeroBrandImageWrap{
+    padding:0 0 12px;
+    border-right:0;
+    border-bottom:1px solid #765b00;
+    justify-content:center;
+  }
+  .clientHeroBrandImage{
+    width:100%;
+    max-height:120px;
+    object-position:center;
+  }
+  .clientHeroV86.customTopImage .clientHeroSide{
+    grid-column:auto;
+    justify-content:center;
+  }
+}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -680,10 +725,14 @@ async function client(){
   const command=target.command;
 
   document.body.classList.add("clientModeV86");
+  const hasCustomTop=Boolean(M.settings.logo_data);
+  const heroBrand=hasCustomTop
+    ? '<div class="clientHeroBrandImageWrap"><img class="clientHeroBrandImage" src="'+E(M.settings.logo_data)+'" alt="Cantinho dos Gigantes"></div>'
+    : '<div class="clientHeroLogoWrap"><img class="clientHeroLogo" src="'+E(DEFAULT_TOP_LOGO)+'" alt="Logo Cantinho dos Gigantes"></div><div class="clientHeroCopy"><h1>'+E(M.settings.name)+'</h1><p>'+E(M.settings.welcome)+'</p></div>';
+
   $("app").innerHTML=
-    '<section class="clientHeroV86">'+
-      '<div class="clientHeroLogoWrap"><img class="clientHeroLogo" src="'+E(M.settings.logo_data||DEFAULT_TOP_LOGO)+'" alt="Logo Cantinho dos Gigantes"></div>'+
-      '<div class="clientHeroCopy"><h1>'+E(M.settings.name)+'</h1><p>'+E(M.settings.welcome)+'</p></div>'+
+    '<section class="clientHeroV86 '+(hasCustomTop?'customTopImage':'')+'">'+
+      heroBrand+
       '<div class="clientHeroSide">'+
         (command?'<span class="tableTag">🎟️ Comanda '+E(command)+'</span>':(mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':''))+
         ((command||mesa) && target.token?'<div class="clientActions"><button class="secondary" onclick="myAccount()">🧾 Minha comanda</button></div>':'')+
@@ -2048,8 +2097,8 @@ async function settings(){
       '<div class="field"><label>Nome</label><input id="sn" value="'+E(m.settings.name)+'"></div>'+
       '<div class="field"><label>Mensagem de boas-vindas</label><textarea id="sw">'+E(m.settings.welcome)+'</textarea></div>'+
       '<div style="margin:14px 0;padding:12px;background:#101010;border:1px solid #403200;border-radius:12px">'+
-        '<div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🖼️ Logo do topo</div>'+
-        '<div style="color:#aaa;font-size:12px;margin-bottom:10px">Escolha uma imagem PNG, JPG ou WEBP. O sistema reduz a imagem automaticamente para carregar rápido no celular.</div>'+
+        '<div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🖼️ Imagem do topo</div>'+
+        '<div style="color:#aaa;font-size:12px;margin-bottom:10px">Escolha uma imagem PNG, JPG ou WEBP. Para este layout, imagens horizontais ficam melhores. O sistema reduz automaticamente para carregar rápido no celular.</div>'+
         '<div style="background:#050505;border:1px solid #333;border-radius:12px;padding:10px;margin-bottom:10px;text-align:center">'+
           '<img id="topLogoPreview" src="'+E(preview)+'" alt="Prévia da logo" style="display:block;max-width:100%;max-height:160px;margin:auto;object-fit:contain">'+
         '</div>'+
@@ -2058,7 +2107,7 @@ async function settings(){
           '<button class="secondary" type="button" onclick="document.getElementById(\'topLogoFile\').click()">📁 Escolher imagem</button>'+
           '<button class="secondary" type="button" onclick="resetTopLogo()">↩️ Usar logo padrão</button>'+
         '</div>'+
-        '<div id="topLogoStatus" style="color:#aaa;font-size:12px;margin-top:8px">'+(pendingTopLogoData?'Logo personalizada em uso.':'Logo padrão em uso.')+'</div>'+
+        '<div id="topLogoStatus" style="color:#aaa;font-size:12px;margin-top:8px">'+(pendingTopLogoData?'Imagem personalizada em uso.':'Imagem padrão em uso.')+'</div>'+
       '</div>'+
       '<div style="margin:14px 0;padding:12px;background:#101010;border:1px solid #403200;border-radius:12px"><div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🔔 Alerta de novos pedidos</div><div style="color:#aaa;font-size:12px;margin-bottom:10px">Use somente para conferir o som e o aviso do painel administrativo.</div><button class="secondary" type="button" onclick="testOrderAlert()">Testar alerta</button></div>'+
       '<button class="btn" onclick="saveSettings()">Salvar</button> '+
@@ -2090,7 +2139,7 @@ async function chooseTopLogo(input){
     pendingTopLogoData=data;
     const preview=$("topLogoPreview");
     if(preview)preview.src=data;
-    if(status)status.textContent="Nova logo pronta. Clique em Salvar para aplicar.";
+    if(status)status.textContent="Nova imagem pronta. Clique em Salvar para aplicar.";
   }catch(e){
     if(status)status.textContent="Não foi possível preparar esta imagem.";
     alert(e.message||"Não foi possível preparar a imagem.");
@@ -2134,7 +2183,7 @@ function resetTopLogo(){
   const preview=$("topLogoPreview");
   if(preview)preview.src=DEFAULT_TOP_LOGO;
   const status=$("topLogoStatus");
-  if(status)status.textContent="Logo padrão selecionada. Clique em Salvar para aplicar.";
+  if(status)status.textContent="Imagem padrão selecionada. Clique em Salvar para aplicar.";
   const input=$("topLogoFile");
   if(input)input.value="";
 }
