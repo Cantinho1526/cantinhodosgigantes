@@ -274,6 +274,33 @@ textarea{min-height:88px}
   }
 }
 
+
+/* V85 - correção final do menu Admin mobile: 4 atalhos + Mais na mesma linha */
+@media (max-width:700px){
+  .adminTabs{
+    grid-template-columns:repeat(5,minmax(0,1fr)) !important;
+    gap:6px !important;
+  }
+  .adminTabs>button,
+  .adminTabs>.adminMoreWrap{
+    min-width:0 !important;
+    width:100% !important;
+  }
+  .adminTabs>button,
+  .adminMoreWrap>button{
+    padding:9px 2px !important;
+    font-size:11px !important;
+    line-height:1.15 !important;
+  }
+  .adminMoreWrap{
+    display:block !important;
+    position:relative !important;
+  }
+  #accountFilterButtons button{
+    font-size:11px !important;
+    padding:10px 2px !important;
+  }
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
