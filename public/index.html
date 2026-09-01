@@ -1132,10 +1132,10 @@ async function accounts(){
         '</div>';
       }
       qrHtml+='</div></div>';
-      $("adminContent").insertAdjacentHTML("beforeend",qrHtml);
+      const adminRoot=$("adminContent"); if(adminRoot)adminRoot.insertAdjacentHTML("beforeend",qrHtml);
     }catch(qrError){
       console.error("Erro ao exibir Comandas QR avulsas:",qrError);
-      $("adminContent").insertAdjacentHTML("beforeend",'<div class="panel" style="margin-top:18px"><div class="row"><h2>🎟️ Comandas QR avulsas</h2><button class="btn" onclick="qrCommands(0)">Abrir comandas QR</button></div></div>');
+      const adminRoot=$("adminContent"); if(adminRoot)adminRoot.insertAdjacentHTML("beforeend",'<div class="panel" style="margin-top:18px"><div class="row"><h2>🎟️ Comandas QR avulsas</h2><button class="btn" onclick="qrCommands(0)">Abrir comandas QR</button></div></div>');
     }
 
     await refreshDashboardStats();
