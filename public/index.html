@@ -1360,7 +1360,7 @@ async function products(){
           '@media(max-width:800px){#productAdminTools .patGrid{grid-template-columns:1fr 1fr}#productAdminTools .patSearch{grid-column:1/-1}}'+
           '@media(max-width:520px){#productAdminTools .patGrid{grid-template-columns:1fr}#productAdminTools .patSearch{grid-column:auto}#productAdminTools button{width:100%}}'+
         '</style>'+ 
-        '<div class="row"><div><h2>🍽️ Cardápio</h2><div style="color:#aaa;font-size:13px">Produtos são arquivados sem apagar o histórico de vendas.</div></div><button class="btn" onclick="productForm()">+ Produto</button></div>'+ 
+        '<div class="row"><div><h2>🍽️ Cardápio</h2><div style="color:#aaa;font-size:13px">Produtos são arquivados sem apagar o histórico de vendas.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary" onclick="organizeBeverageCategories()">🥤 Organizar bebidas</button><button class="btn" onclick="productForm()">+ Produto</button></div></div>'+ 
         '<div id="productAdminTools">'+
           '<div class="patGrid">'+
             '<div class="patSearch"><label>Pesquisar produto</label><div class="searchWrap"><span>🔎</span><input id="productSearch" type="search" placeholder="Digite o nome, categoria ou descrição..." autocomplete="off" oninput="renderProductAdminList()"></div></div>'+ 
@@ -1377,10 +1377,98 @@ async function products(){
   }catch(e){alert(e.message)}
 }
 
+
+async function organizeBeverageCategories(){
+  const norm=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+
+  try{
+    let products=await api("/api/admin/products?include_archived=1");
+    let cats=await api("/api/admin/categories");
+
+    const source=cats.find(c=>norm(c.name)==="bebidas");
+    let target=cats.find(c=>norm(c.name)==="bebidas sem alcool");
+
+    if(!source){
+      alert('A categoria "Bebidas" não existe mais ou já está sem uso. Nenhuma alteração foi necessária.');
+      return;
+    }
+
+    if(!target){
+      target=await api("/api/categories",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:"Bebidas sem álcool"})
+      });
+      cats=await api("/api/admin/categories");
+      target=cats.find(c=>norm(c.name)==="bebidas sem alcool")||target;
+    }
+
+    if(!target?.id){
+      throw Error('Não foi possível localizar/criar a categoria "Bebidas sem álcool".');
+    }
+
+    const toMove=products.filter(p=>Number(p.category_id)===Number(source.id) || norm(p.category)==="bebidas");
+
+    if(!toMove.length){
+      alert('A categoria "Bebidas" já está vazia. No cardápio do cliente ela não será exibida.');
+      await products();
+      return;
+    }
+
+    const names=toMove.map(p=>p.name).join(", ");
+    if(!confirm(
+      'Serão transferidos '+toMove.length+' produto(s) de "Bebidas" para "Bebidas sem álcool":\n\n'+
+      names+
+      '\n\nNenhum preço, estoque, custo, foto ou histórico de vendas será alterado. Continuar?'
+    ))return;
+
+    let moved=0;
+    for(const p of toMove){
+      const payload={
+        name:p.name,
+        description:p.description||"",
+        price:Number(p.price),
+        cost_price:Math.max(0,Number(p.cost_price)||0),
+        category_id:Number(target.id),
+        emoji:p.emoji||"🍽️",
+        image:p.image||"",
+        stock_control:Boolean(p.stock_control),
+        stock_quantity:Math.max(0,Math.floor(Number(p.stock_quantity)||0)),
+        stock_low_threshold:Math.max(0,Math.floor(Number(p.stock_low_threshold)||0)),
+        wine_type:p.wine_type||"",
+        wine_grape:p.wine_grape||"",
+        wine_origin:p.wine_origin||"",
+        wine_vintage:p.wine_vintage||"",
+        wine_volume_ml:Math.max(0,Math.floor(Number(p.wine_volume_ml)||0))||null
+      };
+
+      await api("/api/products/"+Number(p.id),{
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      moved++;
+    }
+
+    alert(
+      'Pronto! '+moved+' produto(s) foram transferidos para "Bebidas sem álcool".\n\n'+
+      'A categoria antiga "Bebidas" ficará vazia e, por isso, não aparecerá no cardápio do cliente.'
+    );
+    await products();
+  }catch(e){
+    alert("Não foi possível organizar as bebidas: "+e.message);
+  }
+}
+
 async function productForm(id){
   try{
     const products=await api("/api/admin/products");
-    const cats=await api("/api/admin/categories");
+    let cats=await api("/api/admin/categories");
+    const normalizeCategoryName=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+    const hasNonAlcoholic=cats.some(c=>normalizeCategoryName(c.name)==="bebidas sem alcool");
+    if(hasNonAlcoholic){
+      cats=cats.filter(c=>normalizeCategoryName(c.name)!=="bebidas");
+    }
     const p=id?products.find(x=>x.id===id):{
       name:"",description:"",price:"",cost_price:0,category_id:cats[0]?.id||1,emoji:"🍽️",image:"",stock_quantity:0,stock_control:false,stock_low_threshold:5,wine_type:"",wine_grape:"",wine_origin:"",wine_vintage:"",wine_volume_ml:""
     };
