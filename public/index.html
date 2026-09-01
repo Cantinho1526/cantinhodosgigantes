@@ -227,6 +227,53 @@ textarea{min-height:88px}
   .adminMoreMenu.open{display:grid;grid-template-columns:1fr 1fr;gap:7px}
   .adminMoreMenu button{background:#242424;color:#fff;border:1px solid #353535;text-align:left;padding:11px 10px;font-size:13px}
 }
+
+/* V84 - refinamento do painel Admin no celular */
+@media (max-width: 700px){
+  .admin-mobile-primary{
+    display:grid !important;
+    grid-template-columns:repeat(5,minmax(0,1fr)) !important;
+    gap:6px !important;
+    width:100% !important;
+    overflow:visible !important;
+  }
+  .admin-mobile-primary > button{
+    min-width:0 !important;
+    width:100% !important;
+    padding:10px 3px !important;
+    font-size:12px !important;
+    white-space:nowrap !important;
+  }
+  .admin-mobile-primary > button .mobileMenuIcon{
+    display:block;
+    font-size:17px;
+    line-height:1;
+    margin-bottom:4px;
+  }
+  #accountSearchTools{
+    display:block !important;
+    margin:12px 0 14px !important;
+  }
+  #accountSearchInput{
+    width:100% !important;
+    box-sizing:border-box !important;
+    margin:0 0 9px !important;
+  }
+  #accountFilterButtons{
+    display:grid !important;
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+    gap:7px !important;
+    width:100% !important;
+  }
+  #accountFilterButtons button{
+    width:100% !important;
+    min-width:0 !important;
+    padding:10px 4px !important;
+    font-size:12px !important;
+    white-space:nowrap !important;
+  }
+}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
@@ -939,9 +986,9 @@ async function accounts(){
     $("adminContent").innerHTML=
       '<div class="panel">'+
         '<div class="row"><h2>Comandas abertas</h2><span class="badgeOpen">'+open.length+' abertas</span></div>'+
-        '<div style="display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:center;margin:12px 0 14px">'+
+        '<div id="accountSearchTools" style="display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:center;margin:12px 0 14px">'+
           '<input id="accountSearchInput" placeholder="🔎 Buscar mesa ou comanda..." value="'+E(accountSearch)+'" oninput="accountSearch=this.value;renderOpenAccountList(window.__openAccounts||[])">'+
-          '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<div id="accountFilterButtons" style="display:flex;gap:8px;flex-wrap:wrap">'+
             '<button id="accountFilter_all" class="'+(accountTypeFilter==="all"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'all\',window.__openAccounts||[])">Todas</button>'+
             '<button id="accountFilter_mesa" class="'+(accountTypeFilter==="mesa"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'mesa\',window.__openAccounts||[])">🪑 Mesas</button>'+
             '<button id="accountFilter_qr" class="'+(accountTypeFilter==="qr"?"btn":"secondary")+'" onclick="setAccountTypeFilter(\'qr\',window.__openAccounts||[])">🎟️ Comandas QR</button>'+
