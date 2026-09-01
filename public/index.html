@@ -877,7 +877,7 @@ async function dashboard(){
     const s=await api("/api/stats");
     $("app").innerHTML=
       '<div class="row"><div><h1 style="margin-bottom:4px">Painel administrativo</h1><div style="color:#aaa">Cantinho dos Gigantes</div></div>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button id="adminAlertTestBtn" class="btn" onclick="testOrderAlert()">🔔 TESTAR ALERTA</button><button class="secondary" onclick="logout()">Sair</button></div></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="secondary" onclick="logout()">Sair</button></div></div>'+
       '<div class="stats">'+
         '<div class="stat"><small>Pedidos</small><strong id="statOrders">'+s.orders+'</strong></div>'+
         '<div class="stat"><small>Comandas abertas</small><strong id="statOpenTables">'+s.open_tables+'</strong></div>'+
@@ -1957,6 +1957,7 @@ async function settings(){
       '<h2>Configurações</h2>'+
       '<div class="field"><label>Nome</label><input id="sn" value="'+E(m.settings.name)+'"></div>'+
       '<div class="field"><label>Mensagem de boas-vindas</label><textarea id="sw">'+E(m.settings.welcome)+'</textarea></div>'+
+      '<div style="margin:14px 0;padding:12px;background:#101010;border:1px solid #403200;border-radius:12px"><div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🔔 Alerta de novos pedidos</div><div style="color:#aaa;font-size:12px;margin-bottom:10px">Use somente para conferir o som e o aviso do painel administrativo.</div><button class="secondary" type="button" onclick="testOrderAlert()">Testar alerta</button></div>'+
       '<button class="btn" onclick="saveSettings()">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
