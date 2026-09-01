@@ -421,6 +421,40 @@ body.clientModeV86 .btn{border-radius:999px}
   }
 }
 
+
+/* V88 - refinamento final do topo personalizado no desktop */
+@media(min-width:761px){
+  .clientHeroV86.customTopImage{
+    grid-template-columns:1fr !important;
+    min-height:150px !important;
+    padding:14px 28px !important;
+  }
+  .clientHeroV86.customTopImage .clientHeroBrandImageWrap{
+    width:100% !important;
+    padding:0 !important;
+    border-right:0 !important;
+    justify-content:center !important;
+  }
+  .clientHeroV86.customTopImage .clientHeroBrandImage{
+    width:min(720px,72vw) !important;
+    max-height:125px !important;
+    object-position:center !important;
+    margin:0 auto !important;
+  }
+  .clientHeroV86.customTopImage .clientHeroSide:empty{
+    display:none !important;
+  }
+  .clientHeroV86.customTopImage .clientHeroSide:not(:empty){
+    position:absolute;
+    right:28px;
+    top:50%;
+    transform:translateY(-50%);
+  }
+  .clientHeroV86.customTopImage{
+    position:relative;
+  }
+}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
