@@ -2144,9 +2144,90 @@ async function settings(){
         '<div id="topLogoStatus" style="color:#aaa;font-size:12px;margin-top:8px">'+(pendingTopLogoData?'Imagem personalizada em uso.':'Imagem padrão em uso.')+'</div>'+
       '</div>'+
       '<div style="margin:14px 0;padding:12px;background:#101010;border:1px solid #403200;border-radius:12px"><div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🔔 Alerta de novos pedidos</div><div style="color:#aaa;font-size:12px;margin-bottom:10px">Use somente para conferir o som e o aviso do painel administrativo.</div><button class="secondary" type="button" onclick="testOrderAlert()">Testar alerta</button></div>'+
+      '<div style="margin:14px 0;padding:12px;background:#241010;border:1px solid #7f1d1d;border-radius:12px">'+
+        '<div style="font-weight:900;color:#ff9b9b;margin-bottom:6px">🚀 Iniciar operação real</div>'+
+        '<div style="color:#ddd;font-size:12px;line-height:1.45;margin-bottom:10px">Use <b>uma única vez</b>, depois que todos os testes terminarem. Zera pedidos, vendas, PIX e caixas de teste, mas preserva produtos, preços, custos, estoque atual, categorias, mesas, QR Codes, configurações e a imagem do topo.</div>'+
+        '<button class="danger" type="button" onclick="openOperationReset()">Zerar dados de teste</button>'+
+      '</div>'+
       '<button class="btn" onclick="saveSettings()">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
+  }catch(e){alert(e.message)}
+}
+
+
+async function openOperationReset(){
+  try{
+    const d=await api("/api/admin/operation-reset/preview");
+    const x=d.remove||{},b=d.blockers||{};
+
+    if(d.already_started){
+      alert("✅ A operação real já foi iniciada. Por segurança, os dados não podem ser zerados novamente.");
+      return;
+    }
+
+    if(!d.can_reset){
+      alert(
+        "A limpeza está bloqueada por segurança.\n\n"+
+        (Number(b.open_cash)>0?"• Existe caixa aberto.\n":"")+
+        (Number(b.open_accounts)>0?"• Existem "+Number(b.open_accounts)+" comanda(s) aberta(s).\n":"")+
+        "\nFeche tudo antes de iniciar a operação real."
+      );
+      return;
+    }
+
+    modal(
+      '<h2>🚀 Iniciar operação real</h2>'+
+      '<div class="notice" style="border-color:#8b1d1d;background:#2a1010;color:#ffd1d1"><b>ATENÇÃO:</b> esta ação apaga definitivamente os registros de TESTE do sistema. Use somente antes da primeira venda real.</div>'+
+      '<div class="reportSummary" style="grid-template-columns:repeat(2,minmax(0,1fr))">'+
+        '<div class="reportBox"><small>Pedidos de teste</small><strong>'+Number(x.orders||0)+'</strong></div>'+
+        '<div class="reportBox"><small>Contas/comandas</small><strong>'+Number(x.accounts||0)+'</strong></div>'+
+        '<div class="reportBox"><small>Registros PIX</small><strong>'+Number(x.pix||0)+'</strong></div>'+
+        '<div class="reportBox"><small>Caixas</small><strong>'+Number(x.cash_sessions||0)+'</strong></div>'+
+        '<div class="reportBox"><small>Mov. venda/cancelamento</small><strong>'+Number(x.stock_sale_movements||0)+'</strong></div>'+
+        '<div class="reportBox"><small>Faturamento a zerar</small><strong>'+R(Number(x.sales_total||0))+'</strong></div>'+
+      '</div>'+
+      '<div style="padding:11px;border:1px solid #245c39;background:#10261a;border-radius:10px;color:#c7f9d9;font-size:13px;line-height:1.5">'+
+        '✅ Serão preservados: <b>produtos, categorias, preços, custos, estoque atual, entradas e ajustes manuais de estoque, mesas, QR Codes, configurações e imagem do topo.</b>'+
+      '</div>'+
+      '<div class="field" style="margin-top:14px"><label>Para confirmar, digite exatamente: <b>ZERAR TESTES</b></label><input id="operationResetConfirm" autocomplete="off" placeholder="ZERAR TESTES"></div>'+
+      '<button class="danger" onclick="confirmOperationReset()">🚀 Zerar testes e iniciar operação real</button> '+
+      '<button class="secondary" onclick="closeModal()">Cancelar</button>'
+    );
+  }catch(e){alert(e.message)}
+}
+
+async function confirmOperationReset(){
+  const confirmation=String($("operationResetConfirm")?.value||"").trim();
+  if(confirmation.toUpperCase()!=="ZERAR TESTES"){
+    alert('Digite exatamente "ZERAR TESTES" para confirmar.');
+    return;
+  }
+  if(!confirm("Última confirmação: apagar todos os registros de teste e zerar o faturamento do sistema?"))return;
+
+  try{
+    const d=await api("/api/admin/operation-reset",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({confirmation})
+    });
+
+    newOrderQueue=[];
+    savePendingAlerts();
+    lastKnownOrderId=0;
+    sessionStorage.removeItem("cg_last_order_id");
+    sessionStorage.removeItem("cg_pending_order_alerts");
+    dismissOrderAlert();
+    stopRepeatingAlert();
+
+    closeModal();
+    alert(
+      "✅ Operação real iniciada!\n\n"+
+      "Pedidos zerados: "+Number(d.removed?.orders||0)+"\n"+
+      "Faturamento removido: "+R(Number(d.removed?.sales_total||0))+"\n\n"+
+      "Cadastros, estoque atual e configurações foram preservados."
+    );
+    await dashboard();
   }catch(e){alert(e.message)}
 }
 
