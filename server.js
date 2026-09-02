@@ -1073,6 +1073,26 @@ app.get("/api/client/command-identification/:code",async(req,res)=>{
   }catch(e){console.error(e);res.status(500).json({error:"Erro ao verificar identificação da comanda."})}
 });
 
+app.post("/api/client/command-identification/:code",async(req,res)=>{
+  const code=normalizeQrCommandCode(req.params.code);
+  if(!code||!validCommandAccess(code,req.body.token||req.query.t)){
+    return res.status(403).json({error:"Acesso inválido à comanda QR."});
+  }
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    const account=await getOrCreateOpenCommandAccount(c,code,req.body.customer_full_name);
+    await c.query("commit");
+    res.json({ok:true,account:{id:account.id,customer_name:account.customer_name,customer_full_name:account.customer_full_name}});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    const msg=String(e.message||"");
+    const status=(msg.includes("nome completo")||msg.includes("titular")||msg.includes("inválida"))?400:500;
+    res.status(status).json({error:msg||"Erro ao identificar a comanda."});
+  }finally{c.release()}
+});
+
 app.get("/api/client/command/:code",async(req,res)=>{
   try{
     const code=normalizeQrCommandCode(req.params.code);
