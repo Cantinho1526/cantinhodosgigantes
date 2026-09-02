@@ -209,6 +209,24 @@ async function init(){
     ON CONFLICT(name) DO NOTHING
   `);
 
+  // Limpeza pontual de um lançamento antigo de TESTE no histórico de estoque.
+  // IMPORTANTE: remove somente o registro histórico; NÃO altera products.stock_quantity.
+  // A condição operation_started_at garante que só um movimento anterior à operação real seja elegível.
+  await pool.query(`
+    DELETE FROM stock_movements sm
+    USING products p, settings s
+    WHERE sm.product_id=p.id
+      AND s.id=1
+      AND s.operation_started_at IS NOT NULL
+      AND sm.created_at < s.operation_started_at
+      AND p.name='Calabresa Acebolada'
+      AND sm.movement_type='Entrada'
+      AND sm.quantity=5
+      AND sm.previous_quantity=10
+      AND sm.new_quantity=15
+      AND trim(coalesce(sm.note,''))='TESTE DE ENTRADA'
+  `);
+
   for(let i=1;i<=12;i++){
     await pool.query(
       "insert into tables_restaurant(number) values($1) on conflict do nothing",
