@@ -72,6 +72,7 @@ async function init(){
     );
 
     ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_data text NOT NULL DEFAULT '';
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS operation_started_at timestamptz;
 
     CREATE TABLE IF NOT EXISTS categories(
       id serial primary key,
@@ -1662,6 +1663,235 @@ app.put("/api/settings",requireAdmin,async(req,res)=>{
   }catch(e){
     console.error(e);
     res.status(500).json({error:"Erro ao salvar configurações."});
+  }
+});
+
+
+// LIMPEZA ÚNICA DOS DADOS DE TESTE ANTES DO INÍCIO DA OPERAÇÃO REAL.
+// Preserva produtos, categorias, preços, custos, estoque atual, configurações,
+// imagem do topo, mesas, QR Codes e movimentações manuais/entradas de estoque.
+app.get("/api/admin/operation-reset/preview",requireAdmin,async(req,res)=>{
+  try{
+    const operationStartedAt=(await pool.query(
+      "select operation_started_at from settings where id=1 limit 1"
+    )).rows[0]?.operation_started_at||null;
+
+    const openCash=Number((await pool.query(
+      "select count(*)::int c from cash_sessions where status='Aberto'"
+    )).rows[0].c||0);
+
+    const openAccounts=Number((await pool.query(`
+      select count(*)::int c
+      from table_accounts a
+      where a.status='Aberta'
+        and exists(
+          select 1 from orders o
+          where o.account_id=a.id and o.status<>'Cancelado'
+        )
+    `)).rows[0].c||0);
+
+    const orders=Number((await pool.query(
+      "select count(*)::int c from orders"
+    )).rows[0].c||0);
+
+    const accounts=Number((await pool.query(
+      "select count(*)::int c from table_accounts"
+    )).rows[0].c||0);
+
+    const pix=Number((await pool.query(
+      "select count(*)::int c from pix_payments"
+    )).rows[0].c||0);
+
+    const cashSessions=Number((await pool.query(
+      "select count(*)::int c from cash_sessions"
+    )).rows[0].c||0);
+
+    const stockSaleMovements=Number((await pool.query(
+      "select count(*)::int c from stock_movements where movement_type in ('Venda','Cancelamento')"
+    )).rows[0].c||0);
+
+    const salesTotal=Number((await pool.query(`
+      select coalesce(sum(x.total),0)::numeric total
+      from (
+        select a.id,
+               coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+        group by a.id
+      ) x
+    `)).rows[0].total||0);
+
+    res.json({
+      ok:true,
+      can_reset:!operationStartedAt&&openCash===0&&openAccounts===0,
+      already_started:Boolean(operationStartedAt),
+      operation_started_at:operationStartedAt,
+      blockers:{
+        open_cash:openCash,
+        open_accounts:openAccounts
+      },
+      remove:{
+        orders,
+        accounts,
+        pix,
+        cash_sessions:cashSessions,
+        stock_sale_movements:stockSaleMovements,
+        sales_total:salesTotal
+      },
+      preserve:{
+        products:true,
+        categories:true,
+        current_stock:true,
+        costs:true,
+        settings:true,
+        logo:true,
+        tables:true,
+        qr_codes:true,
+        manual_stock_entries:true,
+        manual_stock_adjustments:true,
+        profit_rules:true
+      }
+    });
+  }catch(e){
+    console.error("Erro no preview da limpeza de testes:",e);
+    res.status(500).json({error:"Erro ao conferir os dados de teste."});
+  }
+});
+
+app.post("/api/admin/operation-reset",requireAdmin,async(req,res)=>{
+  const confirmation=String(req.body.confirmation||"").trim().toUpperCase();
+  if(confirmation!=="ZERAR TESTES"){
+    return res.status(400).json({
+      error:'Digite exatamente "ZERAR TESTES" para confirmar.'
+    });
+  }
+
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+
+    // Usa a mesma trava financeira já utilizada por pedidos e caixa.
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+
+    const operationStartedAt=(await c.query(
+      "select operation_started_at from settings where id=1 for update"
+    )).rows[0]?.operation_started_at||null;
+
+    if(operationStartedAt){
+      await c.query("rollback");
+      return res.status(409).json({
+        error:"A operação real já foi iniciada anteriormente. A limpeza de testes não pode ser executada novamente.",
+        operation_started_at:operationStartedAt
+      });
+    }
+
+    const openCash=Number((await c.query(
+      "select count(*)::int c from cash_sessions where status='Aberto'"
+    )).rows[0].c||0);
+
+    const openAccounts=Number((await c.query(`
+      select count(*)::int c
+      from table_accounts a
+      where a.status='Aberta'
+        and exists(
+          select 1 from orders o
+          where o.account_id=a.id and o.status<>'Cancelado'
+        )
+    `)).rows[0].c||0);
+
+    if(openCash>0 || openAccounts>0){
+      await c.query("rollback");
+      return res.status(409).json({
+        error:"A limpeza foi bloqueada por segurança. Feche o caixa e todas as comandas antes de zerar os testes.",
+        open_cash:openCash,
+        open_accounts:openAccounts
+      });
+    }
+
+    const beforeOrders=Number((await c.query(
+      "select count(*)::int c from orders"
+    )).rows[0].c||0);
+
+    const beforeAccounts=Number((await c.query(
+      "select count(*)::int c from table_accounts"
+    )).rows[0].c||0);
+
+    const beforePix=Number((await c.query(
+      "select count(*)::int c from pix_payments"
+    )).rows[0].c||0);
+
+    const beforeCash=Number((await c.query(
+      "select count(*)::int c from cash_sessions"
+    )).rows[0].c||0);
+
+    const beforeStockMov=Number((await c.query(
+      "select count(*)::int c from stock_movements where movement_type in ('Venda','Cancelamento')"
+    )).rows[0].c||0);
+
+    const beforeTotal=Number((await c.query(`
+      select coalesce(sum(x.total),0)::numeric total
+      from (
+        select a.id,
+               coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total
+        from table_accounts a
+        left join orders o on o.account_id=a.id
+        where a.status='Fechada'
+        group by a.id
+      ) x
+    `)).rows[0].total||0);
+
+    // Ordem de exclusão respeita as chaves estrangeiras.
+    // O estoque ATUAL em products não é recalculado nem alterado.
+    await c.query("delete from pix_payments");
+    await c.query("delete from order_items");
+    await c.query("delete from orders");
+    await c.query("delete from table_accounts");
+    await c.query("delete from cash_sessions");
+    await c.query(
+      "delete from stock_movements where movement_type in ('Venda','Cancelamento')"
+    );
+
+    // Impede que a limpeza seja executada novamente no futuro.
+    await c.query(
+      "update settings set operation_started_at=now() where id=1"
+    );
+
+    // Não reinicia sequências internas de IDs.
+    // Isso evita colisões e mantém o observador de novos pedidos consistente.
+    await c.query("commit");
+
+    res.json({
+      ok:true,
+      message:"Operação real iniciada. Dados de teste zerados.",
+      removed:{
+        orders:beforeOrders,
+        accounts:beforeAccounts,
+        pix:beforePix,
+        cash_sessions:beforeCash,
+        stock_sale_movements:beforeStockMov,
+        sales_total:beforeTotal
+      },
+      preserved:{
+        current_stock:true,
+        products:true,
+        categories:true,
+        costs:true,
+        settings:true,
+        logo:true,
+        tables:true,
+        qr_codes:true,
+        manual_stock_history:true
+      }
+    });
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error("Erro ao zerar dados de teste:",e);
+    res.status(500).json({
+      error:"Erro ao zerar os dados de teste. Nenhuma alteração parcial foi mantida."
+    });
+  }finally{
+    c.release();
   }
 });
 
