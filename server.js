@@ -106,6 +106,7 @@ async function init(){
 
     ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS account_type text NOT NULL DEFAULT 'Mesa';
     ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS customer_name text DEFAULT '';
+    ALTER TABLE table_accounts ADD COLUMN IF NOT EXISTS customer_full_name text DEFAULT '';
 
     CREATE TABLE IF NOT EXISTS orders(
       id serial primary key,
@@ -476,9 +477,18 @@ async function getOrCreateOpenAccount(client,tableNumber){
 }
 
 
-async function getOrCreateOpenCommandAccount(client,code){
+function normalizeCustomerFullName(value){
+  const name=String(value||"").trim().replace(/\s+/g," ");
+  if(name.length<5||name.length>100||name.split(" ").filter(Boolean).length<2){
+    throw Error("Informe seu nome completo (nome e sobrenome).");
+  }
+  return name;
+}
+
+async function getOrCreateOpenCommandAccount(client,code,customerFullName){
   const normalized=normalizeQrCommandCode(code);
   if(!normalized)throw Error("Comanda QR inválida.");
+  const fullName=normalizeCustomerFullName(customerFullName);
   const tableNumber=commandCodeToTableNumber(normalized);
   await client.query("select pg_advisory_xact_lock($1)",[tableNumber]);
   let r=await client.query(
@@ -488,12 +498,26 @@ async function getOrCreateOpenCommandAccount(client,code){
      for update`,
     [tableNumber]
   );
-  if(r.rowCount)return r.rows[0];
+  if(r.rowCount){
+    const existing=r.rows[0];
+    if(!String(existing.customer_full_name||"").trim()){
+      const updated=await client.query(
+        `update table_accounts set customer_full_name=$1 where id=$2 returning *`,
+        [fullName,existing.id]
+      );
+      return updated.rows[0];
+    }
+    const canon=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ").trim();
+    if(canon(existing.customer_full_name)!==canon(fullName)){
+      throw Error("O nome informado não corresponde ao titular desta comanda.");
+    }
+    return existing;
+  }
   r=await client.query(
-    `insert into table_accounts(table_number,status,account_type,customer_name)
-     values($1,'Aberta','Comanda QR',$2)
+    `insert into table_accounts(table_number,status,account_type,customer_name,customer_full_name)
+     values($1,'Aberta','Comanda QR',$2,$3)
      returning *`,
-    [tableNumber,normalized]
+    [tableNumber,normalized,fullName]
   );
   return r.rows[0];
 }
@@ -560,6 +584,7 @@ app.get("/api/menu",async(req,res)=>{
 
 app.post("/api/orders",async(req,res)=>{
   const {table,items,observation=""}=req.body;
+  const customerFullName=String(req.body.customer_full_name||"");
   const accessToken=String(req.body.access_token||req.body.token||"");
   const commandCode=normalizeQrCommandCode(req.body.command_code||req.body.command);
   const isCommand=Boolean(commandCode);
@@ -596,7 +621,7 @@ app.post("/api/orders",async(req,res)=>{
     }
 
     const account=isCommand
-      ? await getOrCreateOpenCommandAccount(c,commandCode)
+      ? await getOrCreateOpenCommandAccount(c,commandCode,customerFullName)
       : await getOrCreateOpenAccount(c,tableNumber);
 
     let total=0;
@@ -822,6 +847,7 @@ app.get("/api/orders",requireAdmin,async(req,res)=>{
              a.closed_at as account_closed_at,
              a.account_type as account_type,
              a.customer_name as customer_name,
+             a.customer_full_name as customer_full_name,
              exists(
                select 1 from pix_payments pp
                where pp.account_id=o.account_id
@@ -1031,6 +1057,22 @@ app.get("/api/client/account/:table",async(req,res)=>{
 });
 
 
+app.get("/api/client/command-identification/:code",async(req,res)=>{
+  try{
+    const code=normalizeQrCommandCode(req.params.code);
+    if(!code||!validCommandAccess(code,req.query.t)){
+      return res.status(403).json({error:"Acesso inválido à comanda QR."});
+    }
+    const tableNumber=commandCodeToTableNumber(code);
+    const account=(await pool.query(
+      `select customer_full_name from table_accounts
+       where table_number=$1 and status='Aberta' and account_type='Comanda QR'
+       order by id desc limit 1`,[tableNumber]
+    )).rows[0];
+    res.json({open:Boolean(account),identified:Boolean(String(account?.customer_full_name||"").trim())});
+  }catch(e){console.error(e);res.status(500).json({error:"Erro ao verificar identificação da comanda."})}
+});
+
 app.get("/api/client/command/:code",async(req,res)=>{
   try{
     const code=normalizeQrCommandCode(req.params.code);
@@ -1057,7 +1099,7 @@ app.get("/api/client/command/:code",async(req,res)=>{
       )).rows;
       if(o.status!=="Cancelado")total+=Number(o.total);
     }
-    res.json({open:true,account:{id:account.id,account_type:account.account_type,customer_name:code},orders,total});
+    res.json({open:true,account:{id:account.id,account_type:account.account_type,customer_name:code,customer_full_name:account.customer_full_name||""},orders,total});
   }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar sua comanda QR."})}
 });
 
@@ -1264,7 +1306,7 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
       select
-        a.id,a.table_number,a.account_type,a.customer_name,a.status,a.payment_method,a.opened_at,a.closed_at,
+        a.id,a.table_number,a.account_type,a.customer_name,a.customer_full_name,a.status,a.payment_method,a.opened_at,a.closed_at,
         coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
         count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
@@ -1942,7 +1984,7 @@ app.get("/api/qrcode-command/:code",requireAdmin,async(req,res)=>{
 app.get("/api/qr-commands/status",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
-      select a.id,a.table_number,a.customer_name,a.opened_at,
+      select a.id,a.table_number,a.customer_name,a.customer_full_name,a.opened_at,
              coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
              count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
@@ -1965,7 +2007,7 @@ app.get("/api/qr-commands/status",requireAdmin,async(req,res)=>{
 app.get("/api/sales/history",requireAdmin,async(req,res)=>{
   try{
     const rows=(await pool.query(`
-      select a.id,a.table_number,a.account_type,a.customer_name,a.payment_method,a.opened_at,a.closed_at,
+      select a.id,a.table_number,a.account_type,a.customer_name,a.customer_full_name,a.payment_method,a.opened_at,a.closed_at,
              coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0)::numeric total,
              count(o.id) filter(where o.status<>'Cancelado')::int order_count
       from table_accounts a
