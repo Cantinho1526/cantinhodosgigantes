@@ -2123,8 +2123,12 @@ async function stockEntry(id){
 
 async function settings(){
   try{
-    const m=await api("/api/menu");
+    const [m,operationState]=await Promise.all([
+      api("/api/menu"),
+      api("/api/admin/operation-reset/preview").catch(()=>null)
+    ]);
     pendingTopLogoData=m.settings.logo_data||"";
+    const operationRealStarted=Boolean(operationState?.already_started);
     const preview=pendingTopLogoData||DEFAULT_TOP_LOGO;
     modal(
       '<h2>Configurações</h2>'+
@@ -2144,11 +2148,16 @@ async function settings(){
         '<div id="topLogoStatus" style="color:#aaa;font-size:12px;margin-top:8px">'+(pendingTopLogoData?'Imagem personalizada em uso.':'Imagem padrão em uso.')+'</div>'+
       '</div>'+
       '<div style="margin:14px 0;padding:12px;background:#101010;border:1px solid #403200;border-radius:12px"><div style="font-weight:900;color:#ffd34d;margin-bottom:6px">🔔 Alerta de novos pedidos</div><div style="color:#aaa;font-size:12px;margin-bottom:10px">Use somente para conferir o som e o aviso do painel administrativo.</div><button class="secondary" type="button" onclick="testOrderAlert()">Testar alerta</button></div>'+
-      '<div style="margin:14px 0;padding:12px;background:#241010;border:1px solid #7f1d1d;border-radius:12px">'+
-        '<div style="font-weight:900;color:#ff9b9b;margin-bottom:6px">🚀 Iniciar operação real</div>'+
-        '<div style="color:#ddd;font-size:12px;line-height:1.45;margin-bottom:10px">Use <b>uma única vez</b>, depois que todos os testes terminarem. Zera pedidos, vendas, PIX e caixas de teste, mas preserva produtos, preços, custos, estoque atual, categorias, mesas, QR Codes, configurações e a imagem do topo.</div>'+
-        '<button class="danger" type="button" onclick="openOperationReset()">Zerar dados de teste</button>'+
-      '</div>'+
+      (operationRealStarted
+        ? '<div style="margin:14px 0;padding:12px;background:#10261a;border:1px solid #245c39;border-radius:12px">'+
+            '<div style="font-weight:900;color:#7ee2a8;margin-bottom:6px">✅ Operação real iniciada</div>'+
+            '<div style="color:#c7f9d9;font-size:12px;line-height:1.5">Os dados de teste já foram zerados. Por segurança, esta função está <b>bloqueada permanentemente</b> e não pode ser executada novamente.</div>'+
+          '</div>'
+        : '<div style="margin:14px 0;padding:12px;background:#241010;border:1px solid #7f1d1d;border-radius:12px">'+
+            '<div style="font-weight:900;color:#ff9b9b;margin-bottom:6px">🚀 Iniciar operação real</div>'+
+            '<div style="color:#ddd;font-size:12px;line-height:1.45;margin-bottom:10px">Use <b>uma única vez</b>, depois que todos os testes terminarem. Zera pedidos, vendas, PIX e caixas de teste, mas preserva produtos, preços, custos, estoque atual, categorias, mesas, QR Codes, configurações e a imagem do topo.</div>'+
+            '<button class="danger" type="button" onclick="openOperationReset()">Zerar dados de teste</button>'+
+          '</div>')+
       '<button class="btn" onclick="saveSettings()">Salvar</button> '+
       '<button class="secondary" onclick="closeModal()">Cancelar</button>'
     );
