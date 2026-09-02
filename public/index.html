@@ -784,9 +784,15 @@ async function continueCommandWithName(){
   const target=clientTarget();
   const name=String($("commandFullName")?.value||"").trim().replace(/\s+/g," ");
   if(!validFullNameClient(name)){alert("Informe seu nome completo, com nome e sobrenome.");return}
-  commandCustomerFullName=name;
-  sessionStorage.setItem(commandNameStorageKey(target.command),name);
-  await client(true);
+  try{
+    await api("/api/client/command-identification/"+encodeURIComponent(target.command),{
+      method:"POST",
+      body:JSON.stringify({token:target.token,customer_full_name:name})
+    });
+    commandCustomerFullName=name;
+    sessionStorage.setItem(commandNameStorageKey(target.command),name);
+    await client(true);
+  }catch(e){alert(e.message)}
 }
 
 async function client(skipIdentification=false){
