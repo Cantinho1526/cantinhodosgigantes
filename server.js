@@ -1074,14 +1074,15 @@ app.get("/api/client/command-identification/:code",async(req,res)=>{
 });
 
 app.post("/api/client/command-identification/:code",async(req,res)=>{
+  const body=(req.body&&typeof req.body==="object")?req.body:{};
   const code=normalizeQrCommandCode(req.params.code);
-  if(!code||!validCommandAccess(code,req.body.token||req.query.t)){
+  if(!code||!validCommandAccess(code,body.token||req.query.t)){
     return res.status(403).json({error:"Acesso inválido à comanda QR."});
   }
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const account=await getOrCreateOpenCommandAccount(c,code,req.body.customer_full_name);
+    const account=await getOrCreateOpenCommandAccount(c,code,body.customer_full_name);
     await c.query("commit");
     res.json({ok:true,account:{id:account.id,customer_name:account.customer_name,customer_full_name:account.customer_full_name}});
   }catch(e){
