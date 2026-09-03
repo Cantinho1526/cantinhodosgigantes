@@ -1335,6 +1335,7 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
       group by a.id
       having not (
         a.status='Aberta'
+        and a.account_type='Mesa'
         and count(o.id) filter(where o.status<>'Cancelado')=0
       )
       order by
@@ -1347,6 +1348,43 @@ app.get("/api/accounts",requireAdmin,async(req,res)=>{
     console.error(e);
     res.status(500).json({error:"Erro ao carregar comandas."});
   }
+});
+
+app.post("/api/admin/qr-commands/:code/release-empty",requireAdmin,async(req,res)=>{
+  const code=normalizeQrCommandCode(req.params.code);
+  if(!code)return res.status(400).json({error:"Comanda inválida. Use A001 até A200."});
+  const tableNumber=commandCodeToTableNumber(code);
+  const c=await pool.connect();
+  try{
+    await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)",[tableNumber]);
+    const account=(await c.query(
+      `select * from table_accounts
+       where table_number=$1 and status='Aberta' and account_type='Comanda QR'
+       order by id desc limit 1 for update`,[tableNumber]
+    )).rows[0];
+    if(!account){
+      await c.query("rollback");
+      return res.status(404).json({error:"Esta comanda já está livre."});
+    }
+    const orderCount=Number((await c.query(
+      `select count(*)::int c from orders where account_id=$1`,[account.id]
+    )).rows[0].c||0);
+    const pixCount=Number((await c.query(
+      `select count(*)::int c from pix_payments where account_id=$1`,[account.id]
+    )).rows[0].c||0);
+    if(orderCount!==0||pixCount!==0){
+      await c.query("rollback");
+      return res.status(409).json({error:"Esta comanda já possui pedido ou registro PIX e não pode ser liberada por este botão."});
+    }
+    await c.query(`delete from table_accounts where id=$1`,[account.id]);
+    await c.query("commit");
+    res.json({ok:true,code});
+  }catch(e){
+    try{await c.query("rollback")}catch(_e){}
+    console.error(e);
+    res.status(500).json({error:"Erro ao liberar comanda vazia."});
+  }finally{c.release()}
 });
 
 app.get("/api/accounts/table/:table",requireAdmin,async(req,res)=>{
