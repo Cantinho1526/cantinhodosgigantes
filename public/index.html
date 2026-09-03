@@ -787,6 +787,7 @@ async function continueCommandWithName(){
   try{
     await api("/api/client/command-identification/"+encodeURIComponent(target.command),{
       method:"POST",
+      headers:{"Content-Type":"application/json"},
       body:JSON.stringify({token:target.token,customer_full_name:name})
     });
     commandCustomerFullName=name;
