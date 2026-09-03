@@ -1210,6 +1210,7 @@ function renderOpenAccountList(open){
           '<div>'+x.order_count+' pedido(s)</div>'+
           '<div class="accountTotal">'+R(x.total)+'</div>'+
           '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
+          (x.account_type==="Comanda QR"&&Number(x.order_count||0)===0&&Number(x.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+E(x.customer_name)+'\')">Liberar comanda</button>':'')+
         '</div>'
       ).join("")+'</div>'
     : '<div class="empty">Nenhuma comanda encontrada com esse filtro.</div>';
@@ -1264,6 +1265,8 @@ async function accounts(){
           (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
           '<img src="'+q.png+'" alt="QR '+code+'">'+
           '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+          (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
+          (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
         '</div>';
       }
       qrHtml+='</div></div>';
@@ -1274,6 +1277,15 @@ async function accounts(){
     }
 
     await refreshDashboardStats();
+  }catch(e){alert(e.message)}
+}
+
+async function releaseEmptyQrCommand(code){
+  try{
+    if(!confirm("Liberar a comanda "+code+"?\n\nUse esta opção somente quando o cliente não fez nenhum pedido. O nome será removido e a comanda voltará para LIVRE."))return;
+    await api("/api/admin/qr-commands/"+encodeURIComponent(code)+"/release-empty",{method:"POST"});
+    alert("Comanda "+code+" liberada com sucesso.");
+    accounts();
   }catch(e){alert(e.message)}
 }
 
