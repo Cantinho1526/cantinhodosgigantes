@@ -838,6 +838,41 @@ app.get("/api/admin/categories",requireAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:"Erro ao carregar categorias."})}
 });
 
+app.get("/api/orders/watch",requireAdmin,async(req,res)=>{
+  try{
+    const pending=(await pool.query(`
+      select
+        o.id,o.status,o.account_id,o.table_number,o.created_at,
+        a.status as account_status,
+        a.account_type as account_type,
+        a.customer_name as customer_name,
+        a.customer_full_name as customer_full_name,
+        coalesce(
+          json_agg(
+            json_build_object(
+              'name',oi.product_name,
+              'quantity',oi.quantity,
+              'unit_price',oi.unit_price
+            ) order by oi.id
+          ) filter(where oi.id is not null),
+          '[]'::json
+        ) as items
+      from orders o
+      join table_accounts a on a.id=o.account_id
+      left join order_items oi on oi.order_id=o.id
+      where o.status='Recebido' and a.status='Aberta'
+      group by o.id,a.id
+      order by o.id asc
+      limit 100
+    `)).rows;
+    const newest=Number((await pool.query(`select coalesce(max(id),0)::bigint id from orders`)).rows[0].id||0);
+    res.json({pending,newest_id:newest});
+  }catch(e){
+    console.error("Erro no monitor leve de pedidos:",e);
+    res.status(500).json({error:"Erro ao verificar novos pedidos."});
+  }
+});
+
 app.get("/api/orders",requireAdmin,async(req,res)=>{
   try{
     const orders=(await pool.query(`
@@ -2292,12 +2327,17 @@ app.get("/api/stats",requireAdmin,async(req,res)=>{
       select count(*)::int c,
              coalesce(sum(x.total),0)::numeric total
       from (
-        select a.id,coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0) total
+        select
+          a.id,
+          a.account_type,
+          coalesce(sum(case when o.status<>'Cancelado' then o.total else 0 end),0) total,
+          count(o.id) filter(where o.status<>'Cancelado')::int active_order_count
         from table_accounts a
         left join orders o on o.account_id=a.id
         where a.status='Aberta'
         group by a.id
-        having count(o.id) filter(where o.status<>'Cancelado')>0
+        having a.account_type='Comanda QR'
+            or count(o.id) filter(where o.status<>'Cancelado')>0
       ) x
     `)).rows[0];
     const paid=Number((await pool.query(`
@@ -2473,7 +2513,7 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         faturamento_com_custo:Number(financial.known_revenue),
         faturamento_sem_custo:Number(financial.missing_revenue),
         itens_sem_custo:Number(financial.missing_items),
-        cobertura_custos:total>0?(Number(financial.known_revenue)/total)*100:100,
+        cobertura_custos:total>0?(Number(financial.known_revenue)/total)*100:0,
         lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
         lucro_bruto:Number(financial.missing_items)>0?null:total-Number(financial.known_cost)
       },
@@ -2593,7 +2633,7 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
         faturamento_com_custo:Number(financial.known_revenue),
         faturamento_sem_custo:Number(financial.missing_revenue),
         itens_sem_custo:Number(financial.missing_items),
-        cobertura_custos:totalValue>0?(Number(financial.known_revenue)/totalValue)*100:100,
+        cobertura_custos:totalValue>0?(Number(financial.known_revenue)/totalValue)*100:0,
         lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
         lucro_bruto:Number(financial.missing_items)>0?null:totalValue-Number(financial.known_cost)
       },
