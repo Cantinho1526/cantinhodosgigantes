@@ -1196,6 +1196,14 @@ function filterOpenAccounts(open){
     return hay.includes(q);
   });
 }
+function accountOpenTimeInfo(openedAt){
+  const t=new Date(openedAt).getTime();
+  if(!Number.isFinite(t))return {label:"",warn:false};
+  const mins=Math.max(0,Math.floor((Date.now()-t)/60000));
+  const h=Math.floor(mins/60),m=mins%60;
+  let label=h>0?(h+"h"+(m?" "+m+"min":"")):(m+"min");
+  return {label:"🕐 Aberta há "+label,warn:mins>=180};
+}
 function renderOpenAccountList(open){
   const filtered=filterOpenAccounts(open);
   const root=$("openAccountsResults");
@@ -1209,6 +1217,7 @@ function renderOpenAccountList(open){
           '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name)+(x.customer_full_name?' — '+E(x.customer_full_name):''):'🪑 Mesa '+x.table_number)+'</h3>'+
           '<div>'+x.order_count+' pedido(s)</div>'+
           '<div class="accountTotal">'+R(x.total)+'</div>'+
+          (x.opened_at?'<div style="margin:8px 0 10px;font-weight:700;color:'+(accountOpenTimeInfo(x.opened_at).warn?'#ff9f43':'#aaa')+'">'+accountOpenTimeInfo(x.opened_at).label+'</div>':'')+
           '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
           (x.account_type==="Comanda QR"&&Number(x.order_count||0)===0&&Number(x.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+E(x.customer_name)+'\')">Liberar comanda</button>':'')+
         '</div>'
