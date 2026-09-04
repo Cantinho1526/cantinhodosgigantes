@@ -282,6 +282,31 @@ function validCommandAccess(code,token){
   return a.length===b.length && crypto.timingSafeEqual(a,b);
 }
 
+function mercadoPagoOrderState(data){
+  const payment=data?.transactions?.payments?.[0]||{};
+  const orderStatus=String(data?.status||"").toLowerCase();
+  const orderDetail=String(data?.status_detail||"").toLowerCase();
+  const paymentStatus=String(payment?.status||"").toLowerCase();
+  const paymentDetail=String(payment?.status_detail||"").toLowerCase();
+
+  // Orders API: para PIX concluído, a própria order é a referência principal.
+  // Não devemos priorizar um status de transação eventualmente defasado
+  // (ex.: action_required) sobre uma order já processada/acreditada.
+  const paidByOrder=orderStatus==="processed" && orderDetail==="accredited";
+  const paidByPayment=["processed","approved","paid"].includes(paymentStatus);
+  const paid=paidByOrder||paidByPayment;
+
+  return {
+    paid,
+    status:paid?"processed":(orderStatus||paymentStatus||"pending"),
+    orderStatus,
+    orderDetail,
+    paymentStatus,
+    paymentDetail,
+    payment
+  };
+}
+
 async function mercadoPago(pathname,options={}){
   if(!MP_ACCESS_TOKEN)throw Error("PIX ainda não foi configurado no servidor.");
   const r=await fetch("https://api.mercadopago.com"+pathname,{
@@ -320,9 +345,9 @@ async function reconcilePaidPixAccounts(){
   for(const p of rows){
     try{
       const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
-      const payment=data?.transactions?.payments?.[0]||{};
-      const rawStatus=String(payment.status||data.status||"").toLowerCase();
-      const paid=["processed","approved","paid"].includes(rawStatus);
+      const mpState=mercadoPagoOrderState(data);
+      const rawStatus=mpState.status;
+      const paid=mpState.paid;
 
       if(!paid){
         await pool.query(
@@ -1211,10 +1236,11 @@ app.post("/api/client/pix",async(req,res)=>{
     if(existing){
       try{
         const current=await mercadoPago("/v1/orders/"+encodeURIComponent(existing.mp_order_id));
-        const payment=current?.transactions?.payments?.[0]||{};
+        const mpState=mercadoPagoOrderState(current);
+        const payment=mpState.payment;
         const method=payment.payment_method||{};
-        const rawStatus=String(payment.status||current.status||"pending");
-        const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
+        const rawStatus=mpState.status;
+        const paid=mpState.paid;
         await pool.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus,existing.id]);
         if(!paid && ["action_required","pending","processing"].includes(rawStatus.toLowerCase())){
           return res.json({
@@ -1306,16 +1332,22 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
     }
 
     const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
-    const payment=data?.transactions?.payments?.[0]||{};
-    const rawStatus=String(payment.status||data.status||"");
-    const paid=["processed","approved","paid"].includes(rawStatus.toLowerCase());
+    const mpState=mercadoPagoOrderState(data);
+    const rawStatus=mpState.status;
+    const paid=mpState.paid;
 
     if(!paid){
       await pool.query(
         `update pix_payments set status=$1,updated_at=now() where id=$2`,
         [rawStatus||"pending",p.id]
       );
-      return res.json({ok:true,paid:false,status:rawStatus||"pending",account_closed:false});
+      return res.json({
+        ok:true,paid:false,status:rawStatus||"pending",account_closed:false,
+        order_status:mpState.orderStatus||null,
+        order_status_detail:mpState.orderDetail||null,
+        payment_status:mpState.paymentStatus||null,
+        payment_status_detail:mpState.paymentDetail||null
+      });
     }
 
     // Marca o pagamento local como pago antes da reconciliação.
