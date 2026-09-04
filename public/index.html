@@ -596,48 +596,40 @@ async function archiveKitchenOrder(id){
     await orders();
   }catch(e){alert(e.message)}
 }
+async function fetchOrderWatch(){
+  const data=await api("/api/orders/watch?_="+Date.now());
+  return {
+    pending:Array.isArray(data&&data.pending)?data.pending:[],
+    newest:Number(data&&data.newest_id||0)
+  };
+}
 async function checkNewOrders(){
   if(!adminToken||orderWatchBusy)return;
   orderWatchBusy=true;
   try{
-    const a=await api("/api/orders?watch="+Date.now());
+    const {pending,newest}=await fetchOrderWatch();
+    const previousNewest=Number(lastKnownOrderId||0);
+    const hasFresh=pending.some(o=>(Number(o.id)||0)>previousNewest);
 
-    // Remove da fila qualquer pedido que já tenha sido aceito/cancelado.
-    const byId=new Map(a.map(o=>[Number(o.id),o]));
-    newOrderQueue=newOrderQueue.filter(x=>{
-      const current=byId.get(Number(x.id));
-      return current && current.status==="Recebido" && current.account_status==="Aberta";
-    });
+    // A resposta de watch contém somente pedidos realmente pendentes (Recebido + conta aberta).
+    // Assim, pedidos aceitos/cancelados somem da fila sem carregar todo o histórico a cada 2s.
+    newOrderQueue=pending;
     savePendingAlerts();
 
-    const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
-    if(!lastKnownOrderId){
+    if(newest>lastKnownOrderId){
       lastKnownOrderId=newest;
       sessionStorage.setItem("cg_last_order_id",String(newest));
-      if(newOrderQueue.length){
-        showOrderAlert(newOrderQueue[0],false);
-        startRepeatingAlert();
-      }
-      return;
     }
 
-    const fresh=a
-      .filter(o=>(Number(o.id)||0)>lastKnownOrderId && o.status==="Recebido" && o.account_status==="Aberta")
-      .sort((x,y)=>Number(x.id)-Number(y.id));
-
-    if(fresh.length){
-      lastKnownOrderId=Math.max(lastKnownOrderId,...fresh.map(o=>Number(o.id)||0));
-      sessionStorage.setItem("cg_last_order_id",String(lastKnownOrderId));
-      for(const o of fresh){
-        if(!pendingOrderById(o.id))newOrderQueue.push(o);
-      }
-      savePendingAlerts();
-      showOrderAlert(newOrderQueue[0],false);
+    if(newOrderQueue.length){
+      if(!document.getElementById("newOrderToast"))showOrderAlert(newOrderQueue[0],false);
       startRepeatingAlert();
-
-      // Se a tela de Pedidos estiver aberta, atualiza a lista automaticamente.
-      if(document.getElementById("ordersPanelMarker"))orders();
+    }else{
+      stopRepeatingAlert();
+      dismissOrderAlert();
     }
+
+    if(hasFresh&&document.getElementById("ordersPanelMarker"))orders();
   }catch(e){
     console.error("Alerta de pedidos:",e);
   }finally{
@@ -647,18 +639,14 @@ async function checkNewOrders(){
 async function startOrderWatch(){
   stopOrderWatch();
   try{
-    const a=await api("/api/orders?watch="+Date.now());
-    const byId=new Map(a.map(o=>[Number(o.id),o]));
-    newOrderQueue=newOrderQueue.filter(x=>{
-      const current=byId.get(Number(x.id));
-      return current && current.status==="Recebido" && current.account_status==="Aberta";
-    });
+    const {pending,newest}=await fetchOrderWatch();
+    newOrderQueue=pending;
     savePendingAlerts();
-
-    const newest=a.length?Math.max(...a.map(o=>Number(o.id)||0)):0;
     lastKnownOrderId=newest;
     sessionStorage.setItem("cg_last_order_id",String(newest));
 
+    // Mesmo que o Admin tenha ficado fechado, qualquer pedido ainda em "Recebido"
+    // volta a chamar atenção assim que o painel for aberto novamente.
     if(newOrderQueue.length){
       showOrderAlert(newOrderQueue[0],false);
       startRepeatingAlert();
@@ -761,16 +749,25 @@ function validFullNameClient(value){
 async function ensureCommandIdentification(target){
   if(!target.command)return true;
   try{
+    const key=commandNameStorageKey(target.command);
     const st=await api("/api/client/command-identification/"+encodeURIComponent(target.command)+"?t="+encodeURIComponent(target.token));
-    if(st.open&&st.identified){
-      const saved=String(sessionStorage.getItem(commandNameStorageKey(target.command))||"").trim();
-      if(validFullNameClient(saved)){commandCustomerFullName=saved;return true}
+
+    // Se a comanda voltou a ficar LIVRE, qualquer nome salvo neste navegador
+    // pertence ao uso anterior e deve ser descartado obrigatoriamente.
+    if(!st.open){
+      sessionStorage.removeItem(key);
+      commandCustomerFullName="";
       return false;
     }
+
+    if(st.identified){
+      const saved=String(sessionStorage.getItem(key)||"").trim();
+      if(validFullNameClient(saved)){commandCustomerFullName=saved;return true}
+    }
+
+    commandCustomerFullName="";
+    return false;
   }catch(e){alert(e.message);return false}
-  const saved=String(sessionStorage.getItem(commandNameStorageKey(target.command))||"").trim();
-  if(validFullNameClient(saved)){commandCustomerFullName=saved;return true}
-  return false;
 }
 function showCommandIdentification(target){
   $("app").innerHTML='<div class="panel" style="max-width:560px;margin:48px auto;text-align:center">'+
@@ -1274,7 +1271,6 @@ async function accounts(){
           (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
           '<img src="'+q.png+'" alt="QR '+code+'">'+
           '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
-          (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
           (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
         '</div>';
       }
@@ -2523,7 +2519,7 @@ async function profitPanel(start,end){
     const revenueMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.total||0),0);
     const catalogWithoutCost=products.filter(p=>Number(p.cost_price||0)<=0);
     const coveredRevenue=Math.max(0,adjustedTotal-revenueMissing);
-    const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):100;
+    const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):0;
     const partialProfit=coveredRevenue-historicalCost;
     const partialMargin=coveredRevenue>0?(partialProfit/coveredRevenue)*100:0;
 
