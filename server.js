@@ -8,6 +8,7 @@ const app=express();
 const PORT=process.env.PORT||3000;
 const ADMIN_PIN=String(process.env.ADMIN_PIN||"").trim();
 const MP_ACCESS_TOKEN=String(process.env.MP_ACCESS_TOKEN||"").trim();
+const MP_WEBHOOK_SECRET=String(process.env.MP_WEBHOOK_SECRET||"").trim();
 const TABLE_QR_SECRET=String(process.env.TABLE_QR_SECRET||"").trim();
 
 if(!ADMIN_PIN){
@@ -305,6 +306,42 @@ function mercadoPagoOrderState(data){
     paymentDetail,
     payment
   };
+}
+
+function validMercadoPagoWebhook(req){
+  if(!MP_WEBHOOK_SECRET)return false;
+
+  const xSignature=String(req.headers["x-signature"]||"");
+  const xRequestId=String(req.headers["x-request-id"]||"");
+  const dataId=String(req.query?.["data.id"]||req.body?.data?.id||"");
+  if(!xSignature||!dataId)return false;
+
+  let ts="",v1="";
+  for(const part of xSignature.split(",")){
+    const i=part.indexOf("=");
+    if(i<0)continue;
+    const key=part.slice(0,i).trim();
+    const value=part.slice(i+1).trim();
+    if(key==="ts")ts=value;
+    if(key==="v1")v1=value;
+  }
+  if(!ts||!v1)return false;
+
+  // Manifest oficial do Mercado Pago. IDs alfanuméricos devem ser minúsculos.
+  const normalizedDataId=/[a-z]/i.test(dataId)?dataId.toLowerCase():dataId;
+  let manifest="";
+  if(normalizedDataId)manifest+=`id:${normalizedDataId};`;
+  if(xRequestId)manifest+=`request-id:${xRequestId};`;
+  if(ts)manifest+=`ts:${ts};`;
+
+  const expected=crypto.createHmac("sha256",MP_WEBHOOK_SECRET).update(manifest).digest("hex");
+  try{
+    const a=Buffer.from(v1,"hex");
+    const b=Buffer.from(expected,"hex");
+    return a.length===b.length && a.length>0 && crypto.timingSafeEqual(a,b);
+  }catch(_e){
+    return false;
+  }
 }
 
 async function mercadoPago(pathname,options={}){
@@ -1295,6 +1332,59 @@ app.post("/api/client/pix",async(req,res)=>{
   }catch(e){
     console.error(e);
     res.status(400).json({error:e.message||"Não foi possível gerar o Pix."});
+  }
+});
+
+// Webhook oficial do Mercado Pago para Orders.
+// A notificação nunca fecha a comanda por conta própria: primeiro validamos a
+// assinatura e depois consultamos a própria Orders API, que continua sendo a fonte de verdade.
+app.post("/api/webhooks/mercadopago/orders",async(req,res)=>{
+  try{
+    if(!MP_WEBHOOK_SECRET){
+      console.error("Webhook Mercado Pago recebido, mas MP_WEBHOOK_SECRET não está configurado.");
+      return res.sendStatus(503);
+    }
+    if(!validMercadoPagoWebhook(req)){
+      console.warn("Webhook Mercado Pago rejeitado: assinatura inválida.");
+      return res.sendStatus(401);
+    }
+
+    const type=String(req.query?.type||req.body?.type||"").toLowerCase();
+    const orderId=String(req.query?.["data.id"]||req.body?.data?.id||"").trim();
+    if(type && type!=="order")return res.sendStatus(200);
+    if(!orderId)return res.sendStatus(400);
+
+    // Só processa Orders que pertencem a um PIX conhecido pelo Cantinho.
+    const local=(await pool.query(
+      `select id,account_id from pix_payments where mp_order_id=$1 order by id desc limit 1`,
+      [orderId]
+    )).rows[0];
+    if(!local)return res.sendStatus(200);
+
+    const data=await mercadoPago("/v1/orders/"+encodeURIComponent(orderId));
+    const mpState=mercadoPagoOrderState(data);
+    await pool.query(
+      `update pix_payments set status=$1,updated_at=now() where id=$2`,
+      [mpState.paid?"paid":(mpState.status||"pending"),local.id]
+    );
+
+    if(mpState.paid){
+      await reconcilePaidPixAccounts();
+    }
+
+    console.log("Webhook Mercado Pago processado",{
+      pix_id:local.id,
+      account_id:local.account_id,
+      order_id:orderId,
+      status:mpState.status,
+      order_status:mpState.orderStatus,
+      order_status_detail:mpState.orderDetail,
+      paid:mpState.paid
+    });
+    return res.sendStatus(200);
+  }catch(e){
+    console.error("Erro no webhook Mercado Pago:",e);
+    return res.sendStatus(500);
   }
 });
 
