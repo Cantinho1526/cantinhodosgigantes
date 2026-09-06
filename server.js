@@ -1828,12 +1828,13 @@ app.put("/api/products/:id",requireAdmin,async(req,res)=>{
     return res.status(400).json({error:"Preencha nome, preço positivo e categoria válida."});
   }
   try{
-    await pool.query(
-      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9,stock_low_threshold=$10,wine_type=$11,wine_grape=$12,wine_origin=$13,wine_vintage=$14,wine_volume_ml=$15 where id=$16`,
+    const r=await pool.query(
+      `update products set name=$1,description=$2,price=$3,category_id=$4,emoji=$5,image=$6,stock_quantity=$7,stock_control=$8,cost_price=$9,stock_low_threshold=$10,wine_type=$11,wine_grape=$12,wine_origin=$13,wine_vintage=$14,wine_volume_ml=$15 where id=$16 returning id`,
       [name,String(x.description||"").slice(0,500),price,categoryId,
        String(x.emoji||"🍽️"),String(x.image||""),Math.max(0,Math.floor(Number(x.stock_quantity)||0)),Boolean(x.stock_control),Math.max(0,Number(x.cost_price)||0),Math.max(0,Math.floor(Number(x.stock_low_threshold)||0)),
        String(x.wine_type||"").slice(0,80),String(x.wine_grape||"").slice(0,120),String(x.wine_origin||"").slice(0,140),String(x.wine_vintage||"").slice(0,20),Number.isFinite(Number(x.wine_volume_ml))&&Number(x.wine_volume_ml)>0?Math.floor(Number(x.wine_volume_ml)):null,Number(req.params.id)]
     );
+    if(!r.rowCount)return res.status(404).json({error:"Produto não encontrado."});
     res.json({ok:true});
   }catch(e){res.status(500).json({error:"Erro ao atualizar produto."})}
 });
