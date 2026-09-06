@@ -1692,7 +1692,7 @@ function stockGoPage(page){
 }
 
 function renderStockPage(){
-  const list=$("stockProductList"), pager=$("stockPager"), count=$("stockPageCount");
+  const list=$("stockProductList"), pager=$("stockPager"), pagerTop=$("stockPagerTop"), count=$("stockPageCount");
   if(!list||!pager)return;
   const rows=stockFilteredRows();
   const totalPages=Math.max(1,Math.ceil(rows.length/stockPageSize));
@@ -1719,10 +1719,12 @@ function renderStockPage(){
   }).join(""):'<div class="empty">🔎 Nenhum produto encontrado.</div>';
 
   if(count)count.textContent=rows.length?('Mostrando '+(start+1)+'–'+Math.min(start+stockPageSize,rows.length)+' de '+rows.length+' produto(s)'):'0 produtos';
-  pager.innerHTML=totalPages>1?
-    '<button class="secondary" onclick="stockGoPage('+(stockPage-1)+')" '+(stockPage<=1?'disabled':'')+'>← Anterior</button>'+ 
-    '<span style="color:#ddd;font-weight:800">Página '+stockPage+' de '+totalPages+'</span>'+ 
+  const pagerHtml=totalPages>1?
+    '<button class="secondary" onclick="stockGoPage('+(stockPage-1)+')" '+(stockPage<=1?'disabled':'')+'>← Anterior</button>'+
+    '<span style="color:#ddd;font-weight:800">Página '+stockPage+' de '+totalPages+'</span>'+
     '<button class="secondary" onclick="stockGoPage('+(stockPage+1)+')" '+(stockPage>=totalPages?'disabled':'')+'>Próxima →</button>':'';
+  pager.innerHTML=pagerHtml;
+  if(pagerTop)pagerTop.innerHTML=pagerHtml;
 }
 
 async function stock(filter){
@@ -1756,7 +1758,8 @@ async function stock(filter){
           '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+ 
         '</div>'+ 
         '<div class="notice">Cadastre o custo unitário para acompanhar margem e valor do estoque. O preço de venda continua vindo do Cardápio e não é alterado nesta tela.</div>'+ 
-        '<div id="stockPageCount" style="color:#aaa;font-size:13px;margin:12px 0 4px"></div>'+ 
+        '<div id="stockPageCount" style="color:#aaa;font-size:13px;margin:12px 0 4px"></div>'+
+        '<div id="stockPagerTop" class="noPrint" style="display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 14px"></div>'+
         '<div id="stockProductList"></div>'+ 
         '<div id="stockPager" class="noPrint" style="display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px"></div>'+ 
       '</div>';
