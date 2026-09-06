@@ -144,6 +144,8 @@ async function init(){
     ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS entry_unit_cost numeric(10,2);
 
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS account_id int REFERENCES table_accounts(id);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS request_key text;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_request_key_unique ON orders(request_key) WHERE request_key IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS order_items(
       id serial primary key,
@@ -716,6 +718,7 @@ app.post("/api/orders",async(req,res)=>{
   const customerFullName=String(req.body.customer_full_name||"");
   const accessToken=String(req.body.access_token||req.body.token||"");
   const commandCode=normalizeQrCommandCode(req.body.command_code||req.body.command);
+  const requestKey=String(req.body.request_id||req.body.request_key||"").trim();
   const isCommand=Boolean(commandCode);
   const tableNumber=isCommand?commandCodeToTableNumber(commandCode):Number(table);
 
@@ -724,6 +727,9 @@ app.post("/api/orders",async(req,res)=>{
   }
   if(items.length>50){
     return res.status(400).json({error:"Há itens demais neste pedido."});
+  }
+  if(!requestKey || requestKey.length<16 || requestKey.length>120 || !/^[A-Za-z0-9._:-]+$/.test(requestKey)){
+    return res.status(400).json({error:"Identificador de envio inválido. Atualize a página e tente novamente."});
   }
   if(isCommand){
     if(!validCommandAccess(commandCode,accessToken)){
@@ -741,6 +747,23 @@ app.post("/api/orders",async(req,res)=>{
     // Usa o mesmo lock financeiro do fechamento do caixa para impedir a corrida:
     // o caixa não pode fechar entre esta validação e a gravação do pedido.
     await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+
+    // Idempotência: o mesmo clique/reenvio nunca pode criar dois pedidos.
+    const existingOrder=(await c.query(
+      `select o.id,o.account_id,o.table_number,o.total,a.account_type,a.customer_name
+       from orders o left join table_accounts a on a.id=o.account_id
+       where o.request_key=$1 limit 1`,
+      [requestKey]
+    )).rows[0];
+    if(existingOrder){
+      await c.query("commit");
+      return res.json({
+        ok:true,id:existingOrder.id,account_id:existingOrder.account_id,total:Number(existingOrder.total),
+        account_type:existingOrder.account_type||null,command_code:existingOrder.account_type==='Comanda QR'?existingOrder.customer_name:null,
+        table_number:existingOrder.table_number,reused:true
+      });
+    }
+
     const cashSession=await getOpenCashSession(c);
     if(!cashSession){
       const err=Error(noOpenCashOrderMessage());
@@ -756,7 +779,23 @@ app.post("/api/orders",async(req,res)=>{
     let total=0;
     const normalized=[];
 
+    // Consolida o mesmo produto caso uma requisição manipulada o envie em linhas repetidas.
+    const mergedItems=[];
+    const mergedByProduct=new Map();
     for(const item of items){
+      const productId=Number(item&&item.product_id);
+      const rawQuantity=Number(item&&item.quantity);
+      if(!Number.isInteger(productId)||productId<=0||!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99){
+        throw Error("Produto ou quantidade inválida. Use de 1 a 99 unidades por item.");
+      }
+      const quantity=Math.floor(rawQuantity);
+      const next=(mergedByProduct.get(productId)||0)+quantity;
+      if(next>99)throw Error("Quantidade total inválida. Use no máximo 99 unidades do mesmo produto por pedido.");
+      mergedByProduct.set(productId,next);
+    }
+    for(const [product_id,quantity] of mergedByProduct)mergedItems.push({product_id,quantity});
+
+    for(const item of mergedItems){
       const rawQuantity=Number(item.quantity);
       if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99){
         throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
@@ -776,10 +815,10 @@ app.post("/api/orders",async(req,res)=>{
     }
 
     const order=(await c.query(
-      `insert into orders(account_id,table_number,status,observation,total)
-       values($1,$2,'Recebido',$3,$4)
+      `insert into orders(account_id,table_number,status,observation,total,request_key)
+       values($1,$2,'Recebido',$3,$4,$5)
        returning id`,
-      [account.id,tableNumber,String(observation||""),total]
+      [account.id,tableNumber,String(observation||""),total,requestKey]
     )).rows[0];
 
     for(const x of normalized){
