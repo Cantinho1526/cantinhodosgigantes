@@ -1657,7 +1657,7 @@ async function restoreProduct(id){
   }catch(e){alert(e.message)}
 }
 
-let stockFilter="all",stockSearch="";
+let stockFilter="all",stockSearch="",stockPage=1,stockPageSize=15,stockCache=[];
 
 function normalizeStockSearch(value){
   return String(value||"")
@@ -1669,66 +1669,99 @@ function normalizeStockSearch(value){
 
 function filterStockRows(value){
   stockSearch=String(value||"");
+  stockPage=1;
+  renderStockPage();
+}
+
+function stockFilteredRows(){
+  const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
+  const hasCost=p=>Number(p.cost_price||0)>0;
+  let rows=stockFilter==="low"?stockCache.filter(isLow):stockFilter==="nocost"?stockCache.filter(p=>!hasCost(p)):stockCache;
   const q=normalizeStockSearch(stockSearch);
-  const rows=[...document.querySelectorAll(".stockProductRow")];
-  let shown=0;
-  rows.forEach(row=>{
-    const hay=String(row.dataset.search||"");
-    const ok=!q||hay.includes(q);
-    row.style.display=ok?"":"none";
-    if(ok)shown++;
-  });
-  const empty=$("stockSearchEmpty");
-  if(empty)empty.classList.toggle("hidden",shown>0||rows.length===0);
+  if(q) rows=rows.filter(p=>normalizeStockSearch([p.name,p.category].join(" ")).includes(q));
+  return rows;
+}
+
+function stockGoPage(page){
+  const rows=stockFilteredRows();
+  const totalPages=Math.max(1,Math.ceil(rows.length/stockPageSize));
+  stockPage=Math.max(1,Math.min(Number(page)||1,totalPages));
+  renderStockPage();
+  const el=$("adminContent");
+  if(el)el.scrollIntoView({behavior:"auto",block:"start"});
+}
+
+function renderStockPage(){
+  const list=$("stockProductList"), pager=$("stockPager"), count=$("stockPageCount");
+  if(!list||!pager)return;
+  const rows=stockFilteredRows();
+  const totalPages=Math.max(1,Math.ceil(rows.length/stockPageSize));
+  if(stockPage>totalPages)stockPage=totalPages;
+  const start=(stockPage-1)*stockPageSize;
+  const pageRows=rows.slice(start,start+stockPageSize);
+  const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
+
+  list.innerHTML=pageRows.length?pageRows.map(p=>{
+    const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=isLow(p);
+    const price=Number(p.price||0), cost=Number(p.cost_price||0);
+    const margin=price>0&&cost>0?((price-cost)/price*100):null;
+    const value=p.stock_control?q*cost:0;
+    return '<div class="productRow stockProductRow" style="gap:16px">'+
+      '<div style="min-width:240px;flex:1"><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+ 
+      '<div style="display:grid;grid-template-columns:repeat(4,minmax(105px,1fr));gap:8px;flex:2;min-width:520px">'+
+        '<div><small style="color:#999">Estoque atual</small><div style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</div></div>'+ 
+        '<div><small style="color:#999">Custo unitário</small><div style="font-weight:900">'+(cost>0?R(cost):'<span style="color:#ffb74d">Não informado</span>')+'</div></div>'+ 
+        '<div><small style="color:#999">Preço / Margem</small><div style="font-weight:900">'+R(price)+(margin!==null?' • '+margin.toFixed(1).replace('.',',')+'%':'')+'</div></div>'+ 
+        '<div><small style="color:#999">Valor em estoque</small><div style="font-weight:900">'+(p.stock_control&&cost>0?R(value):'—')+'</div></div>'+ 
+      '</div>'+ 
+      '<div class="productActions" style="align-items:center"><button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button></div>'+ 
+    '</div>';
+  }).join(""):'<div class="empty">🔎 Nenhum produto encontrado.</div>';
+
+  if(count)count.textContent=rows.length?('Mostrando '+(start+1)+'–'+Math.min(start+stockPageSize,rows.length)+' de '+rows.length+' produto(s)'):'0 produtos';
+  pager.innerHTML=totalPages>1?
+    '<button class="secondary" onclick="stockGoPage('+(stockPage-1)+')" '+(stockPage<=1?'disabled':'')+'>← Anterior</button>'+ 
+    '<span style="color:#ddd;font-weight:800">Página '+stockPage+' de '+totalPages+'</span>'+ 
+    '<button class="secondary" onclick="stockGoPage('+(stockPage+1)+')" '+(stockPage>=totalPages?'disabled':'')+'>Próxima →</button>':'';
 }
 
 async function stock(filter){
   try{
-    if(typeof filter==="string")stockFilter=filter;
-    else if(typeof filter==="boolean")stockFilter=filter?"low":"all";
+    if(typeof filter==="string"){
+      stockFilter=filter;
+      stockPage=1;
+    }else if(typeof filter==="boolean"){
+      stockFilter=filter?"low":"all";
+      stockPage=1;
+    }
     const a=await api("/api/stock");
+    stockCache=a;
     const controlled=a.filter(p=>p.stock_control);
     const isLow=p=>p.stock_control&&Number(p.stock_quantity)<=Number(p.stock_low_threshold ?? 5);
     const hasCost=p=>Number(p.cost_price||0)>0;
     const low=controlled.filter(isLow);
     const noCost=a.filter(p=>!hasCost(p));
-    const visible=stockFilter==="low"?a.filter(isLow):stockFilter==="nocost"?noCost:a;
     const inventoryValue=controlled.reduce((sum,p)=>sum+(Number(p.stock_quantity||0)*Number(p.cost_price||0)),0);
     $("adminContent").innerHTML=
       '<div class="panel">'+
-        '<div class="row"><div><h2>📦 Estoque e custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição • '+noCost.length+' sem custo cadastrado</div></div><div style="text-align:right"><div style="color:#aaa;font-size:13px">Valor do estoque controlado</div><b style="color:#ffd34d;font-size:22px">'+R(inventoryValue)+'</b></div></div>'+
+        '<div class="row"><div><h2>📦 Estoque e custos</h2><div style="color:#aaa">'+controlled.length+' produto(s) com controle ativo • '+low.length+' precisando de reposição • '+noCost.length+' sem custo cadastrado</div></div><div style="text-align:right"><div style="color:#aaa;font-size:13px">Valor do estoque controlado</div><b style="color:#ffd34d;font-size:22px">'+R(inventoryValue)+'</b></div></div>'+ 
         '<div class="noPrint" style="margin:14px 0 10px">'+
           '<input id="stockSearch" type="search" value="'+E(stockSearch)+'" placeholder="🔎 Buscar produto no estoque..." oninput="filterStockRows(this.value)" autocomplete="off" style="width:100%;min-height:46px;border:1px solid #5b4600;background:#0d0d0d;color:#fff;border-radius:12px;padding:11px 14px;font-size:16px">'+
-        '</div>'+
+        '</div>'+ 
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0" class="noPrint">'+
-          '<button class="'+(stockFilter==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+
-          '<button class="'+(stockFilter==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+noCost.length+')</button>'+
-          '<button class="'+(stockFilter==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+
-          '<button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button>'+
-          '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+
-        '</div>'+
-        '<div class="notice">Cadastre o custo unitário para acompanhar margem e valor do estoque. O preço de venda continua vindo do Cardápio e não é alterado nesta tela.</div>'+
-        (visible.length?visible.map(p=>{
-          const q=Number(p.stock_quantity||0), threshold=Number(p.stock_low_threshold ?? 5), warn=isLow(p);
-          const price=Number(p.price||0), cost=Number(p.cost_price||0);
-          const margin=price>0&&cost>0?((price-cost)/price*100):null;
-          const value=p.stock_control?q*cost:0;
-          const searchText=normalizeStockSearch([p.name,p.category].join(" "));
-          return '<div class="productRow stockProductRow" data-search="'+E(searchText)+'" style="gap:16px">'+
-            '<div style="min-width:240px;flex:1"><b>'+E(p.emoji)+' '+E(p.name)+'</b><div style="color:#aaa;font-size:13px">'+E(p.category)+(p.stock_control?' • Alerta: '+threshold+' un.':'')+'</div></div>'+
-            '<div style="display:grid;grid-template-columns:repeat(4,minmax(105px,1fr));gap:8px;flex:2;min-width:520px">'+
-              '<div><small style="color:#999">Estoque atual</small><div style="font-weight:900;color:'+(warn?'#ffb74d':'#ffd34d')+'">'+(p.stock_control?q+' un.'+(warn?' ⚠️':''):'Sem controle')+'</div></div>'+
-              '<div><small style="color:#999">Custo unitário</small><div style="font-weight:900">'+(cost>0?R(cost):'<span style="color:#ffb74d">Não informado</span>')+'</div></div>'+
-              '<div><small style="color:#999">Preço / Margem</small><div style="font-weight:900">'+R(price)+(margin!==null?' • '+margin.toFixed(1).replace('.',',')+'%':'')+'</div></div>'+
-              '<div><small style="color:#999">Valor em estoque</small><div style="font-weight:900">'+(p.stock_control&&cost>0?R(value):'—')+'</div></div>'+
-            '</div>'+
-            '<div class="productActions" style="align-items:center"><button class="secondary" onclick="stockForm('+p.id+')">Ajustar</button></div>'+
-          '</div>';
-        }).join(""):'<div class="empty">Nenhum produto encontrado neste filtro. ✅</div>')+
-        '<div id="stockSearchEmpty" class="empty hidden">🔎 Nenhum produto encontrado.</div>'+
+          '<button class="'+(stockFilter==="low"?'btn':'secondary')+'" onclick="stock(\'low\')">⚠️ Estoque baixo ('+low.length+')</button>'+ 
+          '<button class="'+(stockFilter==="nocost"?'btn':'secondary')+'" onclick="stock(\'nocost\')">💰 Sem custo ('+noCost.length+')</button>'+ 
+          '<button class="'+(stockFilter==="all"?'btn':'secondary')+'" onclick="stock(\'all\')">📦 Mostrar todos</button>'+ 
+          '<button class="secondary" onclick="stockCostQuick()">💰 Cadastro rápido de custos</button>'+ 
+          '<button class="secondary" onclick="stockReplenishmentList()">🛒 Lista de reposição</button>'+ 
+        '</div>'+ 
+        '<div class="notice">Cadastre o custo unitário para acompanhar margem e valor do estoque. O preço de venda continua vindo do Cardápio e não é alterado nesta tela.</div>'+ 
+        '<div id="stockPageCount" style="color:#aaa;font-size:13px;margin:12px 0 4px"></div>'+ 
+        '<div id="stockProductList"></div>'+ 
+        '<div id="stockPager" class="noPrint" style="display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px"></div>'+ 
       '</div>';
     requestAnimationFrame(()=>{
-      filterStockRows(stockSearch);
+      renderStockPage();
       const el=$("adminContent");
       if(el)el.scrollIntoView({behavior:"auto",block:"start"});
     });
