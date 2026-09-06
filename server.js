@@ -364,6 +364,73 @@ async function mercadoPago(pathname,options={}){
 }
 
 
+async function cancelActiveMercadoPagoPixForAccount(db,accountId){
+  // Deve ser chamado com o bloqueio advisory da comanda já adquirido.
+  const rows=(await db.query(`
+    select id,mp_order_id,status
+    from pix_payments
+    where account_id=$1
+      and lower(status) in ('pending','action_required','processing','created')
+    order by id
+    for update
+  `,[accountId])).rows;
+
+  for(const p of rows){
+    if(!p.mp_order_id){
+      await db.query(`update pix_payments set status='cancelled',updated_at=now() where id=$1`,[p.id]);
+      continue;
+    }
+
+    const fetchState=async()=>mercadoPagoOrderState(
+      await mercadoPago('/v1/orders/'+encodeURIComponent(p.mp_order_id))
+    );
+
+    let state=await fetchState();
+    if(state.paid){
+      await db.query(`update pix_payments set status='paid',updated_at=now() where id=$1`,[p.id]);
+      const err=Error('Operação bloqueada: o PIX desta comanda já foi pago/aprovado no Mercado Pago.');
+      err.statusCode=409;
+      throw err;
+    }
+
+    const inactive=new Set(['cancelled','canceled','expired','rejected','failed']);
+    if(!inactive.has(String(state.status||'').toLowerCase())){
+      try{
+        const cancelled=await mercadoPago('/v1/orders/'+encodeURIComponent(p.mp_order_id)+'/cancel',{
+          method:'POST',
+          headers:{'X-Idempotency-Key':crypto.randomUUID()}
+        });
+        state=mercadoPagoOrderState(cancelled);
+        if(!state.paid && !inactive.has(String(state.status||'').toLowerCase())){
+          state=await fetchState();
+        }
+      }catch(cancelErr){
+        // Em caso de corrida (pagou/cancelou entre o GET e o POST), consulta novamente
+        // o Mercado Pago antes de decidir se a operação local pode continuar.
+        state=await fetchState();
+        if(state.paid){
+          await db.query(`update pix_payments set status='paid',updated_at=now() where id=$1`,[p.id]);
+          const err=Error('Operação bloqueada: o PIX desta comanda foi pago no Mercado Pago antes do cancelamento.');
+          err.statusCode=409;
+          throw err;
+        }
+        if(!inactive.has(String(state.status||'').toLowerCase()))throw cancelErr;
+      }
+    }
+
+    if(state.paid){
+      await db.query(`update pix_payments set status='paid',updated_at=now() where id=$1`,[p.id]);
+      const err=Error('Operação bloqueada: o PIX desta comanda já foi pago/aprovado no Mercado Pago.');
+      err.statusCode=409;
+      throw err;
+    }
+
+    await db.query(`update pix_payments set status='cancelled',updated_at=now() where id=$1`,[p.id]);
+  }
+
+  return rows.length;
+}
+
 async function reconcilePaidPixAccounts(){
   // Procura pagamentos PIX ligados a comandas que ainda constam como abertas.
   // O Mercado Pago é a fonte de verdade: só fecha a comanda se a order estiver realmente paga.
@@ -777,12 +844,8 @@ app.put("/api/stock/costs/bulk",requireAdmin,async(req,res)=>{
   if(items.length>300)return res.status(400).json({error:"Muitos produtos em uma única atualização."});
   const normalized=[];
   for(const x of items){
-    const id=Number(x&&x.id);
-    const rawCost=x&&x.cost_price;
-    const cost=Number(rawCost);
-    if(!Number.isInteger(id)||id<=0||rawCost===""||rawCost===null||rawCost===undefined||!Number.isFinite(cost)||cost<0){
-      return res.status(400).json({error:"Existe um produto ou custo inválido."});
-    }
+    const id=Number(x&&x.id), cost=Math.max(0,Number(x&&x.cost_price)||0);
+    if(!Number.isInteger(id)||id<=0||!Number.isFinite(cost))return res.status(400).json({error:"Existe um produto ou custo inválido."});
     normalized.push({id,cost});
   }
   const c=await pool.connect();
@@ -1051,6 +1114,8 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
         return res.status(409).json({error:"Este pedido não pode ser cancelado porque a comanda já foi encerrada."});
       }
 
+      await c.query("select pg_advisory_xact_lock($1,$2)",[24680,current.account_id]);
+
       const paidPix=(await c.query(`
         select id from pix_payments
         where account_id=$1
@@ -1063,13 +1128,9 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
         return res.status(409).json({error:"Cancelamento bloqueado: esta comanda já possui PIX pago/aprovado."});
       }
 
-      // Qualquer PIX pendente foi gerado com o total anterior e não pode continuar válido no sistema.
-      await c.query(`
-        update pix_payments
-        set status='cancelled',updated_at=now()
-        where account_id=$1
-          and lower(status) in ('pending','action_required','processing')
-      `,[current.account_id]);
+      // Se já existe QR PIX pendente, cancela primeiro a Order no Mercado Pago.
+      // Só depois altera pedido, estoque e total local.
+      await cancelActiveMercadoPagoPixForAccount(c,current.account_id);
 
       const items=(await c.query(`
         select p.id,p.name,p.stock_quantity,oi.quantity
@@ -1132,7 +1193,7 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    res.status(500).json({error:e.message||"Erro ao atualizar status."});
+    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao atualizar status."});
   }finally{
     c.release();
   }
@@ -1240,37 +1301,56 @@ app.post("/api/client/pix",async(req,res)=>{
     return res.status(403).json({error:"Acesso inválido à comanda."});
   }
 
+  const c=await pool.connect();
   try{
-    const cashSession=await getOpenCashSession(pool);
+    await c.query("begin");
+
+    const cashSession=await getOpenCashSession(c);
     if(!cashSession){
+      await c.query("rollback");
       return res.status(409).json({error:noOpenCashMessage(),cash_closed:true});
     }
 
-    const account=(await pool.query(
+    const account=(await c.query(
       `select * from table_accounts
        where table_number=$1 and status='Aberta'
          and account_type=$2
-       order by id desc limit 1`,
+       order by id desc limit 1
+       for update`,
       [tableNumber,isCommand?'Comanda QR':'Mesa']
     )).rows[0];
 
-    if(!account)return res.status(404).json({error:isCommand?"Não há pedidos abertos nesta comanda.":"Não há comanda aberta nesta mesa."});
-    if(isStaleTableAccount(account))return res.status(409).json({error:staleTableAccountMessage(),stale:true});
+    if(!account){
+      await c.query("rollback");
+      return res.status(404).json({error:isCommand?"Não há pedidos abertos nesta comanda.":"Não há comanda aberta nesta mesa."});
+    }
+    if(isStaleTableAccount(account)){
+      await c.query("rollback");
+      return res.status(409).json({error:staleTableAccountMessage(),stale:true});
+    }
 
-    const comandaTotal=Number((await pool.query(
+    // Serializa a geração de PIX por comanda. Dois cliques simultâneos passam por esta fila
+    // e o segundo reutiliza o PIX criado pelo primeiro, em vez de criar outra cobrança real.
+    await c.query("select pg_advisory_xact_lock($1,$2)",[24680,account.id]);
+
+    const comandaTotal=Number((await c.query(
       `select coalesce(sum(total),0)::numeric total
        from orders
        where account_id=$1 and status<>'Cancelado'`,
       [account.id]
     )).rows[0].total);
 
-    if(comandaTotal<=0)return res.status(400).json({error:"A comanda não possui valor para pagamento."});
+    if(comandaTotal<=0){
+      await c.query("rollback");
+      return res.status(400).json({error:"A comanda não possui valor para pagamento."});
+    }
 
     // Evita gerar vários PIX ativos para a mesma comanda e mesmo valor.
-    const existing=(await pool.query(
+    const existing=(await c.query(
       `select * from pix_payments
-       where account_id=$1 and amount=$2 and status in ('pending','action_required','processing')
-       order by id desc limit 1`,
+       where account_id=$1 and amount=$2 and lower(status) in ('pending','action_required','processing','created')
+       order by id desc limit 1
+       for update`,
       [account.id,comandaTotal]
     )).rows[0];
 
@@ -1282,8 +1362,14 @@ app.post("/api/client/pix",async(req,res)=>{
         const method=payment.payment_method||{};
         const rawStatus=mpState.status;
         const paid=mpState.paid;
-        await pool.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus,existing.id]);
-        if(!paid && ["action_required","pending","processing"].includes(rawStatus.toLowerCase())){
+        await c.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus,existing.id]);
+        if(paid){
+          await c.query("commit");
+          const reconciled=await reconcilePaidPixAccounts();
+          return res.json({ok:true,paid:true,reused:true,payment_id:existing.id,amount:Number(existing.amount),status:"processed",reconciled});
+        }
+        if(["action_required","pending","processing","created"].includes(rawStatus.toLowerCase())){
+          await c.query("commit");
           return res.json({
             ok:true,reused:true,payment_id:existing.id,amount:Number(existing.amount),
             qr_code:method.qr_code||existing.qr_code||"",
@@ -1292,7 +1378,11 @@ app.post("/api/client/pix",async(req,res)=>{
             status:rawStatus
           });
         }
-      }catch(_e){}
+      }catch(_e){
+        // Se a consulta de reaproveitamento falhar, não cria outra cobrança às cegas.
+        // A transação é abortada e o cliente pode tentar novamente.
+        throw Error("Não foi possível confirmar o PIX já existente. Tente novamente em alguns segundos.");
+      }
     }
 
     const externalReference=`cantinho_${account.id}_${Date.now()}`;
@@ -1319,7 +1409,7 @@ app.post("/api/client/pix",async(req,res)=>{
     const method=payment.payment_method||{};
     const rawStatus=String(payment.status||data.status||"action_required");
 
-    const saved=(await pool.query(
+    const saved=(await c.query(
       `insert into pix_payments(
          account_id,table_number,mp_order_id,external_reference,amount,status,
          payer_email,qr_code,qr_code_base64,ticket_url
@@ -1328,14 +1418,18 @@ app.post("/api/client/pix",async(req,res)=>{
        method.qr_code||"",method.qr_code_base64||"",method.ticket_url||""]
     )).rows[0];
 
-    res.json({
+    await c.query("commit");
+    return res.json({
       ok:true,production:true,payment_id:saved.id,amount:comandaTotal,
       qr_code:method.qr_code||"",qr_code_base64:method.qr_code_base64||"",
       ticket_url:method.ticket_url||"",status:rawStatus
     });
   }catch(e){
+    try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    res.status(400).json({error:e.message||"Não foi possível gerar o Pix."});
+    return res.status(Number(e.statusCode)||400).json({error:e.message||"Não foi possível gerar o Pix."});
+  }finally{
+    c.release();
   }
 });
 
@@ -1678,8 +1772,10 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
       return res.status(404).json({error:"Comanda aberta não encontrada."});
     }
 
+    await c.query("select pg_advisory_xact_lock($1,$2)",[24680,account.id]);
+
     const pixRows=(await c.query(
-      `select id,status from pix_payments
+      `select id,status,mp_order_id from pix_payments
        where account_id=$1
        order by id desc
        for update`,
@@ -1694,19 +1790,8 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
       });
     }
 
-    const pendingPix=pixRows.filter(p=>
-      ["pending","action_required","processing"].includes(String(p.status||"").toLowerCase())
-    );
-
-    if(pendingPix.length){
-      await c.query(
-        `update pix_payments
-         set status='cancelled',updated_at=now()
-         where account_id=$1
-           and lower(status) in ('pending','action_required','processing')`,
-        [account.id]
-      );
-    }
+    // Cancela qualquer PIX pendente também no Mercado Pago antes de cancelar a comanda local.
+    await cancelActiveMercadoPagoPixForAccount(c,account.id);
 
     const orders=(await c.query(
       `select id from orders where account_id=$1 and status<>'Cancelado' order by id for update`,
@@ -1746,7 +1831,7 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    res.status(500).json({error:e.message||"Erro ao cancelar a comanda."});
+    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao cancelar a comanda."});
   }finally{
     c.release();
   }
@@ -1776,6 +1861,8 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
       return res.status(404).json({error:"Comanda aberta não encontrada."});
     }
 
+    await c.query("select pg_advisory_xact_lock($1,$2)",[24680,account.id]);
+
     const cashSession=await getOpenCashSession(c);
     if(!cashSession){
       await c.query("rollback");
@@ -1788,6 +1875,15 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
       where account_id=$1 and status<>'Cancelado'
     `,[account.id])).rows[0].total);
 
+    if(total<=0){
+      await c.query("rollback");
+      return res.status(409).json({error:"Esta comanda não possui valor em aberto para fechamento."});
+    }
+
+    // Fechamento manual não pode deixar um QR PIX antigo ainda pagável.
+    // Se houver PIX remoto pendente, ele é cancelado antes do fechamento local.
+    await cancelActiveMercadoPagoPixForAccount(c,account.id);
+
     await c.query(`
       update table_accounts
       set status='Fechada',payment_method=$1,closed_at=now()
@@ -1799,7 +1895,7 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
   }catch(e){
     await c.query("rollback");
     console.error(e);
-    res.status(500).json({error:"Erro ao fechar a conta."});
+    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao fechar a conta."});
   }finally{
     c.release();
   }
