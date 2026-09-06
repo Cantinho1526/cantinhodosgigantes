@@ -2134,13 +2134,15 @@ async function profitPanel(start,end){
     const revenueMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.total||0),0);
     const catalogWithoutCost=products.filter(p=>Number(p.cost_price||0)<=0);
     const coveredRevenue=Math.max(0,adjustedTotal-revenueMissing);
-    const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):100;
+    const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):0;
     const partialProfit=coveredRevenue-historicalCost;
     const partialMargin=coveredRevenue>0?(partialProfit/coveredRevenue)*100:0;
 
-    const statusHtml=soldWithoutCost.length
-      ? '<div style="margin-top:12px;padding:12px 14px;border:1px solid #8a6500;background:#2b2200;border-radius:12px;color:#ffe082">⚠️ <b>Lucro total ainda não pode ser calculado com segurança.</b> '+soldWithoutCost.length+' produto(s) vendido(s) estão sem custo cadastrado, somando '+R(revenueMissing)+' do faturamento. Abaixo você pode cadastrar esses custos diretamente.</div>'
-      : '<div style="margin-top:12px;padding:12px 14px;border:1px solid #147a44;background:#0c3f29;border-radius:12px;color:#b9ffd5">✅ <b>Cobertura completa de custos.</b> Todos os produtos vendidos no período possuem custo cadastrado.</div>';
+    const statusHtml=adjustedTotal<=0
+      ? '<div style="margin-top:12px;padding:12px 14px;border:1px solid #555;background:#222;border-radius:12px;color:#ddd">ℹ️ <b>Sem vendas no período.</b> A cobertura de custos será calculada quando houver faturamento.</div>'
+      : soldWithoutCost.length
+        ? '<div style="margin-top:12px;padding:12px 14px;border:1px solid #8a6500;background:#2b2200;border-radius:12px;color:#ffe082">⚠️ <b>Lucro total ainda não pode ser calculado com segurança.</b> '+soldWithoutCost.length+' produto(s) vendido(s) estão sem custo cadastrado, somando '+R(revenueMissing)+' do faturamento. Abaixo você pode cadastrar esses custos diretamente.</div>'
+        : '<div style="margin-top:12px;padding:12px 14px;border:1px solid #147a44;background:#0c3f29;border-radius:12px;color:#b9ffd5">✅ <b>Cobertura completa de custos.</b> Todos os produtos vendidos no período possuem custo cadastrado.</div>';
 
     const activeMissing=soldWithoutCost.filter(x=>x.product);
     const historicalMissing=soldWithoutCost.filter(x=>!x.product);
