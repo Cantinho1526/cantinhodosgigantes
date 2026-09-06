@@ -777,8 +777,12 @@ app.put("/api/stock/costs/bulk",requireAdmin,async(req,res)=>{
   if(items.length>300)return res.status(400).json({error:"Muitos produtos em uma única atualização."});
   const normalized=[];
   for(const x of items){
-    const id=Number(x&&x.id), cost=Math.max(0,Number(x&&x.cost_price)||0);
-    if(!Number.isInteger(id)||id<=0||!Number.isFinite(cost))return res.status(400).json({error:"Existe um produto ou custo inválido."});
+    const id=Number(x&&x.id);
+    const rawCost=x&&x.cost_price;
+    const cost=Number(rawCost);
+    if(!Number.isInteger(id)||id<=0||rawCost===""||rawCost===null||rawCost===undefined||!Number.isFinite(cost)||cost<0){
+      return res.status(400).json({error:"Existe um produto ou custo inválido."});
+    }
     normalized.push({id,cost});
   }
   const c=await pool.connect();
