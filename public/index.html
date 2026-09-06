@@ -319,6 +319,7 @@ textarea{min-height:88px}
 
 <script>
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
+let orderSubmitBusy=false,pendingOrderRequestId="";
 let pixAutoTimer=null,pixAutoPaymentId=null,pixAutoStartedAt=0;
 let adminOrderWatch=null,lastKnownOrderId=0,newOrderQueue=[],audioCtx=null,orderWatchBusy=false,repeatAlertTimer=null;
 
@@ -708,23 +709,33 @@ function checkout(){
 
   const total=B.reduce((a,x)=>a+x.quantity*x.price,0);
   const label=target.command?"Comanda "+target.command:"Mesa "+mesa;
+  orderSubmitBusy=false;
+  pendingOrderRequestId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(36).slice(2)+"-"+Math.random().toString(36).slice(2));
   modal(
     '<h2>Confirmar pedido</h2>'+ 
     '<div class="notice"><b>'+E(label)+'</b></div>'+ 
     B.map(x=>'<p>'+x.quantity+'x '+E(x.name)+' — <b>'+R(x.quantity*x.price)+'</b></p>').join("")+ 
     '<hr style="border-color:#333"><h3>Total: '+R(total)+'</h3>'+ 
     '<div class="field"><label>Observação</label><textarea id="obs" placeholder="Ex.: sem cebola, bem passado..."></textarea></div>'+ 
-    '<button class="btn" onclick="sendOrder()">Enviar pedido</button> '+ 
+    '<button id="sendOrderBtn" class="btn" onclick="sendOrder()">Enviar pedido</button> '+ 
     '<button class="secondary" onclick="closeModal()">Voltar</button>'
   );
 }
 
 async function sendOrder(){
+  if(orderSubmitBusy)return;
   const target=clientTarget();
   const mesa=target.mesa;
+  const btn=$("sendOrderBtn");
+  orderSubmitBusy=true;
+  if(btn){btn.disabled=true;btn.textContent="Enviando..."}
   try{
+    if(!pendingOrderRequestId){
+      pendingOrderRequestId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(36).slice(2)+"-"+Math.random().toString(36).slice(2));
+    }
     const payload={
       access_token:target.token,
+      request_id:pendingOrderRequestId,
       items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
       observation:$("obs").value
     };
@@ -736,6 +747,7 @@ async function sendOrder(){
       body:JSON.stringify(payload)
     });
     B=[];renderCart();
+    pendingOrderRequestId="";
     const label=target.command?"Comanda "+target.command:"Mesa "+mesa;
     modal(
       '<div style="text-align:center">'+
@@ -746,7 +758,13 @@ async function sendOrder(){
         '<button class="secondary" onclick="closeModal()">OK</button>'+ 
       '</div>'
     );
-  }catch(e){alert(e.message)}
+  }catch(e){
+    orderSubmitBusy=false;
+    if(btn){btn.disabled=false;btn.textContent="Enviar pedido"}
+    alert(e.message);
+    return;
+  }
+  orderSubmitBusy=false;
 }
 
 async function myAccount(){
