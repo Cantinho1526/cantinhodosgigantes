@@ -2,7 +2,7 @@ name: Backup diário Neon
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 jobs:
@@ -10,22 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Instalar PostgreSQL
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-18
-
-      - name: Criar backup
+      - name: Criar backup PostgreSQL 18
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          pg_dump "$DATABASE_URL" \
-            --format=custom \
-            --no-owner \
-            --no-privileges \
-            --file=backup.dump
-
-          pg_restore --list backup.dump > backup-list.txt
+          docker run --rm \
+            -e DATABASE_URL \
+            -v "$PWD:/backup" \
+            postgres:18 \
+            sh -c 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --file=/backup/backup.dump && pg_restore --list /backup/backup.dump > /backup/backup-list.txt'
 
       - name: Proteger backup com senha
         env:
@@ -36,11 +29,13 @@ jobs:
             -out backup.dump.enc \
             -pass env:BACKUP_PASSWORD
 
-      - name: Guardar backup
+          rm -f backup.dump
+          rm -f backup-list.txt
+
+      - name: Guardar backup criptografado
         uses: actions/upload-artifact@v4
         with:
-          name: cantinho-backup-${{ github.run_number }}
-          path: |
-            backup.dump.enc
-            backup-list.txt
-          retention-days: 30
+          name: backup-neon-${{ github.run_number }}
+          path: backup.dump.enc
+          retention-days: 90
+          if-no-files-found: error
