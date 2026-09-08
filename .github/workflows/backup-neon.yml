@@ -1,0 +1,46 @@
+name: Backup diário Neon
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Instalar PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Criar backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            --file=backup.dump
+
+          pg_restore --list backup.dump > backup-list.txt
+
+      - name: Proteger backup com senha
+        env:
+          BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+        run: |
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -in backup.dump \
+            -out backup.dump.enc \
+            -pass env:BACKUP_PASSWORD
+
+      - name: Guardar backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: cantinho-backup-${{ github.run_number }}
+          path: |
+            backup.dump.enc
+            backup-list.txt
+          retention-days: 30
