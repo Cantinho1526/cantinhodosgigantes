@@ -591,22 +591,76 @@ function targetLabel(){
 }
 function orderLabel(o){
   return o&&o.account_type==="Comanda QR"&&o.customer_name
-    ? "Comanda "+o.customer_name
+    ? "Comanda "+o.customer_name+(o.customer_full_name?" — "+o.customer_full_name:"")
     : "Mesa "+o.table_number;
 }
 
-async function client(){
+let commandCustomerFullName="";
+
+function commandNameStorageKey(code){return "cantinho_command_name_"+String(code||"").toUpperCase()}
+function validFullNameClient(value){
+  const name=String(value||"").trim().replace(/\s+/g," ");
+  return name.length>=5&&name.length<=100&&name.split(" ").filter(Boolean).length>=2;
+}
+async function ensureCommandIdentification(target){
+  if(!target.command)return true;
+  try{
+    const key=commandNameStorageKey(target.command);
+    const st=await api("/api/client/command-identification/"+encodeURIComponent(target.command)+"?t="+encodeURIComponent(target.token));
+    if(!st.open){
+      sessionStorage.removeItem(key);
+      commandCustomerFullName="";
+      return false;
+    }
+    if(st.identified){
+      const saved=String(sessionStorage.getItem(key)||"").trim();
+      if(validFullNameClient(saved)){commandCustomerFullName=saved;return true}
+    }
+    commandCustomerFullName="";
+    return false;
+  }catch(e){alert(e.message);return false}
+}
+function showCommandIdentification(target){
+  $("app").innerHTML='<div class="panel" style="max-width:560px;margin:48px auto;text-align:center">'+
+    '<div style="font-size:48px">🎟️</div><h1>Comanda '+E(target.command)+'</h1>'+
+    '<p style="color:#bbb">Para começar, informe seu nome completo. Assim conseguimos identificar sua comanda com segurança.</p>'+
+    '<div class="field" style="text-align:left;margin-top:22px"><label>Nome completo</label><input id="commandFullName" autocomplete="name" maxlength="100" placeholder="Ex.: Sandra Chagas de Andrade"></div>'+
+    '<button class="btn" style="width:100%;margin-top:12px" onclick="continueCommandWithName()">Começar pedido</button></div>';
+  setTimeout(()=>$("commandFullName")?.focus(),50);
+}
+async function continueCommandWithName(){
+  const target=clientTarget();
+  const name=String($("commandFullName")?.value||"").trim().replace(/\s+/g," ");
+  if(!validFullNameClient(name)){alert("Informe seu nome completo, com nome e sobrenome.");return}
+  try{
+    await api("/api/client/command-identification/"+encodeURIComponent(target.command),{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token:target.token,customer_full_name:name})
+    });
+    commandCustomerFullName=name;
+    sessionStorage.setItem(commandNameStorageKey(target.command),name);
+    await client(true);
+  }catch(e){alert(e.message)}
+}
+
+async function client(skipIdentification=false){
   setMode("client");
   M=await api("/api/menu");
   const target=clientTarget();
   const mesa=target.mesa;
   const command=target.command;
 
+  if(command&&!skipIdentification){
+    const identified=await ensureCommandIdentification(target);
+    if(!identified){showCommandIdentification(target);return}
+  }
+
   $("app").innerHTML=
     '<section class="hero">'+
       '<h1>'+E(M.settings.name)+'</h1>'+
       '<p>'+E(M.settings.welcome)+'</p>'+
-      (command?'<span class="tableTag">🎟️ Comanda '+E(command)+'</span>':(mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':''))+
+      (command?'<span class="tableTag">🎟️ Comanda '+E(command)+(commandCustomerFullName?' — '+E(commandCustomerFullName):'')+'</span>':(mesa?'<span class="tableTag">🪑 Mesa '+E(mesa)+'</span>':''))+
       ((command||mesa) && target.token?'<div class="clientActions"><button class="secondary" onclick="myAccount()">🧾 Minha comanda</button></div>':'')+
     '</section>'+
     '<div class="tabs">'+
@@ -739,8 +793,10 @@ async function sendOrder(){
       items:B.map(x=>({product_id:x.product_id,quantity:x.quantity})),
       observation:$("obs").value
     };
-    if(target.command)payload.command_code=target.command;
-    else payload.table=Number(mesa);
+    if(target.command){
+      payload.command_code=target.command;
+      payload.customer_full_name=commandCustomerFullName||sessionStorage.getItem(commandNameStorageKey(target.command))||"";
+    }else payload.table=Number(mesa);
     const r=await api("/api/orders",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -993,9 +1049,17 @@ function filterOpenAccounts(open){
     const label=x.account_type==="Comanda QR"
       ? "comanda "+String(x.customer_name||"")
       : "mesa "+String(x.table_number??"");
-    const hay=normalizeAccountSearch(label+" "+String(x.customer_name||"")+" "+String(x.table_number??""));
+    const hay=normalizeAccountSearch(label+" "+String(x.customer_name||"")+" "+String(x.customer_full_name||"")+" "+String(x.table_number??""));
     return hay.includes(q);
   });
+}
+function accountOpenTimeInfo(openedAt){
+  const t=new Date(openedAt).getTime();
+  if(!Number.isFinite(t))return {label:"",warn:false};
+  const mins=Math.max(0,Math.floor((Date.now()-t)/60000));
+  const h=Math.floor(mins/60),m=mins%60;
+  let label=h>0?(h+"h"+(m?" "+m+"min":"")):(m+"min");
+  return {label:"🕐 Aberta há "+label,warn:mins>=180};
 }
 function renderOpenAccountList(open){
   const filtered=filterOpenAccounts(open);
@@ -1007,10 +1071,12 @@ function renderOpenAccountList(open){
     ? '<div class="accountGrid">'+filtered.map(x=>
         '<div class="accountCard open">'+
           '<span class="badgeOpen">ABERTA</span>'+
-          '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name):'🪑 Mesa '+x.table_number)+'</h3>'+
+          '<h3>'+(x.account_type==="Comanda QR"?'🎟️ Comanda '+E(x.customer_name)+(x.customer_full_name?' — '+E(x.customer_full_name):''):'🪑 Mesa '+x.table_number)+'</h3>'+
           '<div>'+x.order_count+' pedido(s)</div>'+
           '<div class="accountTotal">'+R(x.total)+'</div>'+
+          (x.opened_at?'<div style="margin:8px 0 10px;font-weight:700;color:'+(accountOpenTimeInfo(x.opened_at).warn?'#ff9f43':'#aaa')+'">'+accountOpenTimeInfo(x.opened_at).label+'</div>':'')+
           '<button class="btn" onclick="viewAccount('+x.table_number+')">Ver comanda</button>'+
+          (x.account_type==="Comanda QR"&&Number(x.order_count||0)===0&&Number(x.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+E(x.customer_name)+'\')">Liberar comanda</button>':'')+
         '</div>'
       ).join("")+'</div>'
     : '<div class="empty">Nenhuma comanda encontrada com esse filtro.</div>';
@@ -1062,19 +1128,29 @@ async function accounts(){
         const busy=st.status==='EM USO';
         qrHtml+='<div class="qrCard">'+
           '<div class="row"><h3>🎟️ '+code+'</h3><b style="color:'+(busy?'#ff9f43':'#166534')+'">'+(busy?'EM USO':'LIVRE')+'</b></div>'+ 
-          (busy?'<p>'+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
+          (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
           '<img src="'+q.png+'" alt="QR '+code+'">'+
           '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+          (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
         '</div>';
       }
       qrHtml+='</div></div>';
-      $("adminContent").insertAdjacentHTML("beforeend",qrHtml);
+      const adminRoot=$("adminContent"); if(adminRoot)adminRoot.insertAdjacentHTML("beforeend",qrHtml);
     }catch(qrError){
       console.error("Erro ao exibir Comandas QR avulsas:",qrError);
-      $("adminContent").insertAdjacentHTML("beforeend",'<div class="panel" style="margin-top:18px"><div class="row"><h2>🎟️ Comandas QR avulsas</h2><button class="btn" onclick="qrCommands(0)">Abrir comandas QR</button></div></div>');
+      const adminRoot=$("adminContent"); if(adminRoot)adminRoot.insertAdjacentHTML("beforeend",'<div class="panel" style="margin-top:18px"><div class="row"><h2>🎟️ Comandas QR avulsas</h2><button class="btn" onclick="qrCommands(0)">Abrir comandas QR</button></div></div>');
     }
 
     await refreshDashboardStats();
+  }catch(e){alert(e.message)}
+}
+
+async function releaseEmptyQrCommand(code){
+  try{
+    if(!confirm("Liberar a comanda "+code+"?\n\nUse esta opção somente quando o cliente não fez nenhum pedido. O nome será removido e a comanda voltará para LIVRE."))return;
+    await api("/api/admin/qr-commands/"+encodeURIComponent(code)+"/release-empty",{method:"POST"});
+    alert("Comanda "+code+" liberada com sucesso.");
+    accounts();
   }catch(e){alert(e.message)}
 }
 
@@ -1086,7 +1162,7 @@ async function viewAccount(tableNumber){
     const account=data.account;
     window.__viewAccountContext=account;
     modal(
-      '<h2>'+(account.account_type==="Comanda QR"?'🎟️ Comanda — '+E(account.customer_name):'🪑 Comanda — Mesa '+tableNumber)+'</h2>'+
+      '<h2>'+(account.account_type==="Comanda QR"?'🎟️ Comanda — '+E(account.customer_name)+(account.customer_full_name?' — '+E(account.customer_full_name):''):'🪑 Comanda — Mesa '+tableNumber)+'</h2>'+
       '<div class="notice">Aberta em '+new Date(account.opened_at).toLocaleString("pt-BR")+'</div>'+
       data.orders.map(o=>
         '<div class="billOrder">'+
@@ -2554,7 +2630,7 @@ async function qrCommands(page=qrCommandPage){
       const busy=st.status==='EM USO';
       html+='<div class="qrCard">'+
         '<div class="row"><h3>🎟️ '+code+'</h3><b style="color:'+(busy?'#ff9f43':'#166534')+'">'+(busy?'EM USO':'LIVRE')+'</b></div>'+ 
-        (busy?'<p>'+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
+        (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
         '<img src="'+q.png+'" alt="QR '+code+'">'+
         '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
       '</div>';
