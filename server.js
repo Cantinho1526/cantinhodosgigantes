@@ -699,8 +699,15 @@ app.get("/api/menu",async(req,res)=>{
       where exists(select 1 from products p where p.category_id=c.id and p.active=true)
       order by c.id
     `)).rows;
+    // Cardápio público: envie somente os campos necessários ao cliente.
+    // Custos, margens, limites de estoque e demais dados administrativos
+    // permanecem disponíveis apenas nas rotas protegidas do Admin.
     const products=(await pool.query(`
-      select p.*,c.name category
+      select
+        p.id,p.name,p.description,p.price,p.category_id,p.emoji,p.image,
+        p.stock_control,p.stock_quantity,
+        p.wine_type,p.wine_grape,p.wine_origin,p.wine_vintage,p.wine_volume_ml,
+        c.name category
       from products p
       join categories c on c.id=p.category_id
       where p.active=true
@@ -1767,15 +1774,30 @@ app.post("/api/accounts/:id/orders",requireAdmin,async(req,res)=>{
     const account=(await c.query(`select * from table_accounts where id=$1 and status='Aberta' for update`,[Number(req.params.id)])).rows[0];
     if(!account)throw Error("Comanda aberta não encontrada.");
     let total=0; const normalized=[];
+
+    // V89: consolida produtos repetidos também nos pedidos lançados pelo Admin.
+    // Assim a validação de estoque considera a quantidade TOTAL do mesmo produto
+    // antes de qualquer baixa, evitando estoque incorreto em requisições duplicadas.
+    const mergedByProduct=new Map();
     for(const item of items){
-      const rawQuantity=Number(item.quantity||1);
-      if(!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99)throw Error("Quantidade inválida. Use de 1 a 99 unidades por item.");
+      const productId=Number(item&&item.product_id);
+      const rawQuantity=Number(item&&item.quantity);
+      if(!Number.isInteger(productId)||productId<=0||!Number.isFinite(rawQuantity)||rawQuantity<1||rawQuantity>99){
+        throw Error("Produto ou quantidade inválida. Use de 1 a 99 unidades por item.");
+      }
       const quantity=Math.floor(rawQuantity);
-      const r=await c.query("select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",[Number(item.product_id)]);
+      const next=(mergedByProduct.get(productId)||0)+quantity;
+      if(next>99)throw Error("Quantidade total inválida. Use no máximo 99 unidades do mesmo produto por pedido.");
+      mergedByProduct.set(productId,next);
+    }
+
+    for(const [productId,quantity] of mergedByProduct){
+      const r=await c.query("select id,name,price,cost_price,stock_quantity,stock_control from products where id=$1 and active=true for update",[productId]);
       if(!r.rowCount)throw Error("Produto inválido.");
       const p=r.rows[0],price=Number(p.price),cost=Number(p.cost_price||0);
       if(p.stock_control&&Number(p.stock_quantity)<quantity)throw Error(`Estoque insuficiente para ${p.name}. Disponível: ${p.stock_quantity}`);
-      total+=price*quantity; normalized.push({p,quantity,price,cost});
+      total+=price*quantity;
+      normalized.push({p,quantity,price,cost});
     }
     const order=(await c.query(`insert into orders(account_id,table_number,status,observation,total) values($1,$2,'Recebido',$3,$4) returning id`,[account.id,account.table_number,observation,total])).rows[0];
     for(const x of normalized){
