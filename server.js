@@ -7,12 +7,17 @@ const QRCode=require("qrcode");
 const app=express();
 const PORT=process.env.PORT||3000;
 const ADMIN_PIN=String(process.env.ADMIN_PIN||"").trim();
+const ADMIN_SESSION_SECRET=String(process.env.ADMIN_SESSION_SECRET||"").trim();
 const MP_ACCESS_TOKEN=String(process.env.MP_ACCESS_TOKEN||"").trim();
 const MP_WEBHOOK_SECRET=String(process.env.MP_WEBHOOK_SECRET||"").trim();
 const TABLE_QR_SECRET=String(process.env.TABLE_QR_SECRET||"").trim();
 
 if(!ADMIN_PIN){
   console.error("ADMIN_PIN ausente. Configure a variável no Render antes de iniciar o sistema.");
+  process.exit(1);
+}
+if(!ADMIN_SESSION_SECRET){
+  console.error("ADMIN_SESSION_SECRET ausente. Configure uma chave forte e aleatória no Render antes de iniciar o sistema.");
   process.exit(1);
 }
 if(!TABLE_QR_SECRET){
@@ -41,7 +46,7 @@ function createAdminToken(){
     exp:Date.now()+(ADMIN_SESSION_HOURS*60*60*1000)
   };
   const body=Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig=crypto.createHmac("sha256",ADMIN_PIN).update(body).digest("base64url");
+  const sig=crypto.createHmac("sha256",ADMIN_SESSION_SECRET).update(body).digest("base64url");
   return body+"."+sig;
 }
 
@@ -51,7 +56,7 @@ function verifyAdminToken(token){
     const [body,sig]=token.split(".");
     if(!body||!sig)return false;
 
-    const expected=crypto.createHmac("sha256",ADMIN_PIN).update(body).digest("base64url");
+    const expected=crypto.createHmac("sha256",ADMIN_SESSION_SECRET).update(body).digest("base64url");
     const a=Buffer.from(sig);
     const b=Buffer.from(expected);
 
