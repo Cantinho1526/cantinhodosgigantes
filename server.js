@@ -30,9 +30,22 @@ if(!process.env.DATABASE_URL){
   process.exit(1);
 }
 
+function secureDatabaseUrl(raw){
+  const u=new URL(raw);
+  // O TLS e a validacao do certificado sao controlados explicitamente abaixo.
+  // Removemos opcoes SSL da URL porque o node-postgres pode sobrescrever o objeto `ssl`.
+  u.searchParams.delete("sslmode");
+  u.searchParams.delete("sslcert");
+  u.searchParams.delete("sslkey");
+  u.searchParams.delete("sslrootcert");
+  u.searchParams.delete("channel_binding");
+  return u.toString();
+}
+
 const pool=new Pool({
-  connectionString:process.env.DATABASE_URL,
-  ssl:{rejectUnauthorized:false}
+  connectionString:secureDatabaseUrl(process.env.DATABASE_URL),
+  ssl:{rejectUnauthorized:true},
+  enableChannelBinding:true
 });
 
 app.use(express.json({limit:"2mb"}));
