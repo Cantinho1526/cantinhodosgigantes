@@ -366,21 +366,53 @@ function validMercadoPagoWebhook(req){
 
 async function mercadoPago(pathname,options={}){
   if(!MP_ACCESS_TOKEN)throw Error("PIX ainda não foi configurado no servidor.");
-  const r=await fetch("https://api.mercadopago.com"+pathname,{
-    ...options,
-    headers:{
-      "Accept":"application/json",
-      "Content-Type":"application/json",
-      "Authorization":"Bearer "+MP_ACCESS_TOKEN,
-      ...(options.headers||{})
+
+  // V93: evita deixar uma transacao/comanda travada por varios minutos caso
+  // a API do Mercado Pago fique indisponivel ou a rede tenha uma falha silenciosa.
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),15000);
+  try{
+    const r=await fetch("https://api.mercadopago.com"+pathname,{
+      ...options,
+      signal:controller.signal,
+      headers:{
+        "Accept":"application/json",
+        "Content-Type":"application/json",
+        "Authorization":"Bearer "+MP_ACCESS_TOKEN,
+        ...(options.headers||{})
+      }
+    });
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){
+      console.error("Mercado Pago",r.status,JSON.stringify(data,null,2));
+      const err=Error(data.message||data.error||"Não foi possível gerar o Pix.");
+      err.statusCode=r.status>=500?503:400;
+      throw err;
     }
-  });
-  const data=await r.json().catch(()=>({}));
-  if(!r.ok){
-    console.error("Mercado Pago",r.status,JSON.stringify(data,null,2));
-    throw Error(data.message||data.error||"Não foi possível gerar o Pix.");
+    return data;
+  }catch(e){
+    if(e?.name==="AbortError"){
+      const err=Error("O Mercado Pago demorou para responder. Aguarde alguns segundos e tente novamente.");
+      err.statusCode=503;
+      throw err;
+    }
+    throw e;
+  }finally{
+    clearTimeout(timer);
   }
-  return data;
+}
+
+function stablePixIdempotencyKey(accountId,amount,attemptNumber){
+  // UUID deterministico. Se a API do Mercado Pago criar a cobranca mas o
+  // servidor cair antes de salva-la no Neon, a repeticao usa a MESMA chave
+  // e recupera a mesma operacao em vez de criar uma segunda cobranca.
+  const cents=Math.round(Number(amount)*100);
+  const seed=`cantinho-pix:${Number(accountId)}:${cents}:${Number(attemptNumber)}`;
+  const bytes=Buffer.from(crypto.createHash("sha256").update(seed).digest().subarray(0,16));
+  bytes[6]=(bytes[6]&0x0f)|0x40;
+  bytes[8]=(bytes[8]&0x3f)|0x80;
+  const h=bytes.toString("hex");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
 }
 
 
@@ -1449,10 +1481,19 @@ app.post("/api/client/pix",async(req,res)=>{
       }
     }
 
-    const externalReference=`cantinho_${account.id}_${Date.now()}`;
+    // V93: a tentativa e derivada do historico LOCAL da comanda. Se o Mercado
+    // Pago aceitar a cobranca e houver queda antes do INSERT/COMMIT local, o
+    // contador nao avanca; ao tentar novamente usamos a mesma chave de
+    // idempotencia e evitamos criar um segundo PIX para a mesma tentativa.
+    const pixAttemptNumber=Number((await c.query(
+      `select count(*)::int c from pix_payments where account_id=$1`,
+      [account.id]
+    )).rows[0].c||0)+1;
+    const idempotencyKey=stablePixIdempotencyKey(account.id,comandaTotal,pixAttemptNumber);
+    const externalReference=`cantinho_${account.id}_${Math.round(comandaTotal*100)}_${pixAttemptNumber}`;
     const data=await mercadoPago("/v1/orders",{
       method:"POST",
-      headers:{"X-Idempotency-Key":crypto.randomUUID()},
+      headers:{"X-Idempotency-Key":idempotencyKey},
       body:JSON.stringify({
         type:"online",
         external_reference:externalReference,
