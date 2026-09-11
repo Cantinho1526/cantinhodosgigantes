@@ -303,6 +303,50 @@ function validCommandAccess(code,token){
   return a.length===b.length && crypto.timingSafeEqual(a,b);
 }
 
+// Protecao anti-spam para pedidos publicos.
+// Conta somente request_ids distintos: uma repeticao idempotente do mesmo envio
+// continua permitida e nunca vira um segundo pedido.
+const PUBLIC_ORDER_RATE_WINDOW_MS=60*1000;
+const PUBLIC_ORDER_RATE_MAX=8;
+const publicOrderRate=new Map();
+
+function checkPublicOrderRateLimit(identity,requestKey){
+  const now=Date.now();
+  const key=String(identity||"");
+  let bucket=publicOrderRate.get(key);
+  if(!bucket){
+    bucket=new Map();
+    publicOrderRate.set(key,bucket);
+  }
+
+  for(const [rk,ts] of bucket){
+    if(now-ts>=PUBLIC_ORDER_RATE_WINDOW_MS)bucket.delete(rk);
+  }
+
+  // Retry/reenvio do mesmo pedido: deixa a idempotencia do banco responder.
+  if(bucket.has(requestKey))return {ok:true,retry:true};
+
+  if(bucket.size>=PUBLIC_ORDER_RATE_MAX){
+    const oldest=Math.min(...bucket.values());
+    const retryAfter=Math.max(1,Math.ceil((PUBLIC_ORDER_RATE_WINDOW_MS-(now-oldest))/1000));
+    return {ok:false,retryAfter};
+  }
+
+  bucket.set(requestKey,now);
+  return {ok:true,retry:false};
+}
+
+const publicOrderRateCleanup=setInterval(()=>{
+  const now=Date.now();
+  for(const [key,bucket] of publicOrderRate){
+    for(const [rk,ts] of bucket){
+      if(now-ts>=PUBLIC_ORDER_RATE_WINDOW_MS)bucket.delete(rk);
+    }
+    if(!bucket.size)publicOrderRate.delete(key);
+  }
+},5*60*1000);
+if(typeof publicOrderRateCleanup.unref==="function")publicOrderRateCleanup.unref();
+
 function mercadoPagoOrderState(data){
   const payment=data?.transactions?.payments?.[0]||{};
   const orderStatus=String(data?.status||"").toLowerCase();
@@ -794,6 +838,18 @@ app.post("/api/orders",async(req,res)=>{
     }
   }else if(!validTableAccess(tableNumber,accessToken)){
     return res.status(403).json({error:"QR Code inválido ou expirado. Abra o cardápio pelo QR Code da mesa."});
+  }
+
+  // Limita pedidos novos por QR, sem bloquear reenvios do mesmo request_id.
+  // Isso reduz spam/automacao que poderia lotar cozinha, banco e estoque.
+  const rateIdentity=isCommand?"command:"+commandCode:"table:"+tableNumber;
+  const rate=checkPublicOrderRateLimit(rateIdentity,requestKey);
+  if(!rate.ok){
+    res.setHeader("Retry-After",String(rate.retryAfter));
+    return res.status(429).json({
+      error:"Muitos pedidos enviados em pouco tempo por este QR Code. Aguarde alguns segundos e tente novamente.",
+      retry_after_seconds:rate.retryAfter
+    });
   }
 
   const c=await pool.connect();
