@@ -1,0 +1,72 @@
+name: Restaurar backup no Aiven
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  restaurar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Localizar o ultimo backup valido
+        id: backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="$(gh run list --workflow backup-neon.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Baixar o backup criptografado
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.backup.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: restore
+
+      - name: Descriptografar e validar o backup
+        env:
+          BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+        run: |
+          ARQUIVO="$(find restore -type f -name 'backup.dump.enc' -print -quit)"
+          test -n "$ARQUIVO"
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in "$ARQUIVO" \
+            -out backup.dump \
+            -pass env:BACKUP_PASSWORD
+          docker run --rm \
+            -v "$PWD:/restore" \
+            postgres:18 \
+            pg_restore --list /restore/backup.dump > backup-list.txt
+          test -s backup-list.txt
+
+      - name: Restaurar no Aiven
+        env:
+          AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+        run: |
+          test -n "$AIVEN_DATABASE_URL"
+          docker run --rm \
+            -e AIVEN_DATABASE_URL \
+            -v "$PWD:/restore" \
+            postgres:18 \
+            sh -c 'pg_restore \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --dbname="$AIVEN_DATABASE_URL" \
+              /restore/backup.dump'
+
+      - name: Conferir tabelas restauradas
+        env:
+          AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+        run: |
+          docker run --rm \
+            -e AIVEN_DATABASE_URL \
+            postgres:18 \
+            sh -c 'psql "$AIVEN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) AS tabelas FROM information_schema.tables WHERE table_schema = '\''public'\'';"'
