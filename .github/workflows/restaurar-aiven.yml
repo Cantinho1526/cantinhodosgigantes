@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Carregar o repositorio
+        uses: actions/checkout@v4
+
       - name: Localizar o ultimo backup valido
         id: backup
         env:
