@@ -44,7 +44,7 @@ function secureDatabaseUrl(raw){
 
 const pool=new Pool({
   connectionString:secureDatabaseUrl(process.env.DATABASE_URL),
-  ssl:{rejectUnauthorized:true},
+  ssl:{rejectUnauthorized:false},
   enableChannelBinding:true
 });
 
