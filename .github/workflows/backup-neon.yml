@@ -1,4 +1,4 @@
-name: Backup diário Neon
+name: Backup diario Aiven
 
 on:
   schedule:
@@ -12,13 +12,13 @@ jobs:
     steps:
       - name: Criar backup PostgreSQL 18
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
         run: |
           docker run --rm \
-            -e DATABASE_URL \
+            -e AIVEN_DATABASE_URL \
             -v "$PWD:/backup" \
             postgres:18 \
-            sh -c 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --file=/backup/backup.dump && pg_restore --list /backup/backup.dump > /backup/backup-list.txt'
+            sh -c 'pg_dump "$AIVEN_DATABASE_URL" --format=custom --no-owner --no-privileges --file=/backup/backup.dump && pg_restore --list /backup/backup.dump > /backup/backup-list.txt'
 
       - name: Proteger backup com senha
         env:
@@ -28,14 +28,13 @@ jobs:
             -in backup.dump \
             -out backup.dump.enc \
             -pass env:BACKUP_PASSWORD
-
           rm -f backup.dump
           rm -f backup-list.txt
 
       - name: Guardar backup criptografado
         uses: actions/upload-artifact@v4
         with:
-          name: backup-neon-${{ github.run_number }}
+          name: backup-aiven-${{ github.run_number }}
           path: backup.dump.enc
           retention-days: 90
           if-no-files-found: error
