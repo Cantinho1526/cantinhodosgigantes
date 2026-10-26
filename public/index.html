@@ -318,6 +318,7 @@ textarea{min-height:88px}
 <div id="modal" class="modal hidden"></div>
 
 <script>
+let menuSearch="";
 let M=null,B=[],C="Todos",adminToken=sessionStorage.getItem("cg_admin_token")||"";
 let orderSubmitBusy=false,pendingOrderRequestId="";
 let pixAutoTimer=null,pixAutoPaymentId=null,pixAutoStartedAt=0;
@@ -526,6 +527,8 @@ const E=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt
 
 async function api(url,opts={}){
   const headers={...(opts.headers||{})};
+  const target=clientTarget();
+  if(target.command){const session=sessionStorage.getItem("cg_command_session_"+target.command);if(session)headers["X-Command-Session"]=session;}
   if(adminToken)headers["X-Admin-Token"]=adminToken;
 
   let r;
@@ -578,6 +581,16 @@ function modal(html,{keepPixWatcher=false}={}){
 function closeModal(){stopPixAutoCheck();$("modal").classList.add("hidden")}
 
 
+// Temporary session links are delivered by staff for the current account only.
+function importCommandSession(){
+  const qs=new URLSearchParams(location.search),fragment=new URLSearchParams(location.hash.slice(1));
+  const code=String(qs.get("comanda")||"").toUpperCase(),session=fragment.get("session");
+  if(/^A\d{3}$/.test(code)&&session){
+    sessionStorage.setItem("cg_command_session_"+code,session);
+    history.replaceState(null,"",location.pathname+location.search);
+  }
+}
+importCommandSession();
 function clientTarget(){
   const qs=new URLSearchParams(location.search);
   const command=String(qs.get("comanda")||"").trim().toUpperCase();
@@ -609,9 +622,11 @@ async function ensureCommandIdentification(target){
     const st=await api("/api/client/command-identification/"+encodeURIComponent(target.command)+"?t="+encodeURIComponent(target.token));
     if(!st.open){
       sessionStorage.removeItem(key);
+      sessionStorage.removeItem("cg_command_session_"+target.command);
       commandCustomerFullName="";
       return false;
     }
+    target.inUseWithoutSession=st.open&&!st.identified;
     if(st.identified){
       const saved=String(sessionStorage.getItem(key)||"").trim();
       if(validFullNameClient(saved)){commandCustomerFullName=saved;return true}
@@ -621,6 +636,10 @@ async function ensureCommandIdentification(target){
   }catch(e){alert(e.message);return false}
 }
 function showCommandIdentification(target){
+  if(target.inUseWithoutSession){
+    $("app").innerHTML='<div class="panel" style="max-width:560px;margin:48px auto;text-align:center"><h1>Comanda '+E(target.command)+'</h1><p>Esta comanda está em uso. Para acessá-la neste aparelho, peça ao atendimento o QR de autorização do atendimento atual.</p></div>';
+    return;
+  }
   $("app").innerHTML='<div class="panel" style="max-width:560px;margin:48px auto;text-align:center">'+
     '<div style="font-size:48px">🎟️</div><h1>Comanda '+E(target.command)+'</h1>'+
     '<p style="color:#bbb">Para começar, informe seu nome completo. Assim conseguimos identificar sua comanda com segurança.</p>'+
@@ -633,11 +652,12 @@ async function continueCommandWithName(){
   const name=String($("commandFullName")?.value||"").trim().replace(/\s+/g," ");
   if(!validFullNameClient(name)){alert("Informe seu nome completo, com nome e sobrenome.");return}
   try{
-    await api("/api/client/command-identification/"+encodeURIComponent(target.command),{
+    const identification=await api("/api/client/command-identification/"+encodeURIComponent(target.command),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({token:target.token,customer_full_name:name})
     });
+    sessionStorage.setItem("cg_command_session_"+target.command,identification.session_token);
     commandCustomerFullName=name;
     sessionStorage.setItem(commandNameStorageKey(target.command),name);
     await client(true);
@@ -665,9 +685,10 @@ async function client(skipIdentification=false){
     '</section>'+
     '<div class="tabs">'+
       ["Todos",...M.categories.map(x=>x.name)].map(c=>
-        '<button class="'+(c===C?"sel":"")+'" onclick="C=\''+E(c)+'\';renderMenu()">'+E(c)+'</button>'
+        '<button class="'+(c===C?"sel":"")+'" data-category="'+E(c)+'" onclick="C=this.dataset.category;renderMenu()">'+E(c)+'</button>'
       ).join("")+
     '</div>'+
+    '<div class="field"><label for="menuSearch">Pesquisar no cardápio</label><input id="menuSearch" type="search" placeholder="Digite o nome do produto..." value="'+E(menuSearch)+'" oninput="menuSearch=this.value;renderMenu()"></div>'+
     '<div id="products" class="grid"></div>';
 
   renderMenu();
@@ -713,12 +734,14 @@ function wineDetails(id){
 }
 
 function renderMenu(){
-  const products=M.products.filter(p=>C==="Todos"||p.category===C);
+  const norm=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  const query=norm(menuSearch).trim();
+  const products=M.products.filter(p=>(C==="Todos"||p.category===C)&&(!query||norm([p.name,p.description,p.category].join(" ")).includes(query)));
   $("products").innerHTML=products.map(p=>{
     const soldOut=Boolean(p.stock_control)&&Number(p.stock_quantity)<=0;
     const wine=isWineProduct(p);
     return '<article class="card '+(wine?'wineCard':'')+'">'+
-      '<div class="pic">'+(p.image?'<img src="'+E(p.image)+'" alt="'+E(p.name)+'">':E(p.emoji))+'</div>'+
+      '<div class="pic">'+(p.image?'<img loading="lazy" decoding="async" src="'+E(p.image)+'" alt="'+E(p.name)+'">':E(p.emoji))+'</div>'+
       '<div class="cardBody">'+
         '<h3>'+E(p.name)+'</h3>'+
         (wine
@@ -1131,6 +1154,7 @@ async function accounts(){
           (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
           '<img src="'+q.png+'" alt="QR '+code+'">'+
           '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+          (busy?'<button class="secondary" style="margin-top:8px" onclick="showCurrentCommandAccess(\''+code+'\')">Autorizar outro aparelho</button>':'')+
           (busy&&Number(st.order_count||0)===0&&Number(st.total||0)===0?'<button class="danger" style="margin-top:8px" onclick="releaseEmptyQrCommand(\''+code+'\')">Liberar comanda</button>':'')+
         '</div>';
       }
@@ -2173,7 +2197,7 @@ async function salesHistory(){
     const a=await api("/api/sales/history");
     const totals=a.reduce((z,x)=>{const v=Number(x.total);z.total+=v;z[x.payment_method]=(z[x.payment_method]||0)+v;return z},{total:0,PIX:0,Dinheiro:0,"Cartão":0});
     $("adminContent").innerHTML='<div class="panel"><h2>📊 Histórico de vendas</h2>'+ 
-      '<div class="cashSummary"><div class="cashBox"><small>Total</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div><div class="cashBox"><small>Dinheiro</small><strong>'+R(totals.Dinheiro)+'</strong></div><div class="cashBox"><small>Cartão</small><strong>'+R(totals["Cartão"])+'</strong></div></div>'+ 
+      '<div class="cashSummary"><div class="cashBox"><small>Total histórico</small><strong>'+R(totals.total)+'</strong></div><div class="cashBox"><small>PIX</small><strong>'+R(totals.PIX)+'</strong></div>'+((totals.Dinheiro||totals["Cartão"])?'<div class="cashBox"><small>Registros antigos de outras modalidades</small><strong>'+R(totals.Dinheiro+totals["Cartão"])+'</strong></div>':'')+'</div>'+
       (!a.length?'<div class="empty">Nenhuma venda fechada.</div>':a.map(x=>'<div class="saleRow"><div><b>'+E(accountDisplayLabel(x))+' • '+E(x.payment_method||"")+'</b><div style="color:#aaa">'+new Date(x.closed_at).toLocaleString("pt-BR")+' • '+x.order_count+' pedido(s)</div></div><div class="price">'+R(x.total)+'</div></div>').join(""))+'</div>';
   }catch(e){alert(e.message)}
 }
@@ -2536,8 +2560,8 @@ function downloadPeriodReportPdf(){
   title("RESUMO");
   row("Faturamento",money(r.summary.total));
   row("PIX",money(r.summary.pix));
-  row("Dinheiro",money(r.summary.dinheiro));
-  row("Cartao",money(r.summary.cartao));
+  const legacy=Number(r.summary.dinheiro||0)+Number(r.summary.cartao||0);
+  if(legacy)row("Registros antigos de outras modalidades",money(legacy));
   row("Contas fechadas",String(r.summary.contas||0));
   row("Ticket medio",money(r.summary.ticket_medio));
   row("Itens vendidos",String(r.summary.itens||0));
@@ -2612,6 +2636,13 @@ function exportDailyCSV(){
 }
 
 
+async function showCurrentCommandAccess(code){
+  if(!confirm("Autorizar este aparelho a acessar o atendimento atual da comanda "+code+"? Mostre o QR somente ao titular."))return;
+  try{
+    const q=await api("/api/admin/qr-commands/"+encodeURIComponent(code)+"/session");
+    modal('<h2>Acesso ao atendimento atual — '+E(code)+'</h2><p>Mostre este QR somente ao titular. Ele deixa de servir quando a comanda for encerrada.</p><img src="'+E(q.png)+'" alt="Acesso à comanda" style="max-width:100%"><button class="btn" onclick="closeModal()">Fechar</button>');
+  }catch(e){alert(e.message)}
+}
 let qrCommandPage=0;
 async function qrCommands(page=qrCommandPage){
   try{
@@ -2633,6 +2664,7 @@ async function qrCommands(page=qrCommandPage){
         (busy?'<p>'+(st.customer_full_name?'<b>'+E(st.customer_full_name)+'</b><br>':'')+Number(st.order_count||0)+' pedido(s) • <b>'+R(st.total)+'</b></p>':'<p style="color:#888">Pronta para entregar ao próximo cliente</p>')+
         '<img src="'+q.png+'" alt="QR '+code+'">'+
         '<a download="QR-Comanda-'+code+'.png" href="'+q.png+'"><button class="btn">Baixar QR</button></a>'+ 
+        (busy?'<button class="secondary" onclick="showCurrentCommandAccess(\''+code+'\')">Autorizar outro aparelho</button>':'')+
       '</div>';
     }
     html+='</div></div>';

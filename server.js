@@ -3,8 +3,11 @@ const path=require("path");
 const crypto=require("crypto");
 const {Pool}=require("pg");
 const QRCode=require("qrcode");
+const {databaseConfig,commandSession,validCommandSession,imageReference}=require("./security");
 
 const app=express();
+// Render is the trusted reverse proxy immediately in front of this service.
+app.set("trust proxy",1);
 const PORT=process.env.PORT||3000;
 const ADMIN_PIN=String(process.env.ADMIN_PIN||"").trim();
 const ADMIN_SESSION_SECRET=String(process.env.ADMIN_SESSION_SECRET||"").trim();
@@ -30,24 +33,18 @@ if(!process.env.DATABASE_URL){
   process.exit(1);
 }
 
-function secureDatabaseUrl(raw){
-  const u=new URL(raw);
-  // O TLS e a validacao do certificado sao controlados explicitamente abaixo.
-  // Removemos opcoes SSL da URL porque o node-postgres pode sobrescrever o objeto `ssl`.
-  u.searchParams.delete("sslmode");
-  u.searchParams.delete("sslcert");
-  u.searchParams.delete("sslkey");
-  u.searchParams.delete("sslrootcert");
-  u.searchParams.delete("channel_binding");
-  return u.toString();
-}
+const pool=new Pool(databaseConfig(process.env.DATABASE_URL));
+pool.on("error",err=>console.error("Conexão ociosa do banco encerrada:",err.code||err.message));
 
-const pool=new Pool({
-  connectionString:secureDatabaseUrl(process.env.DATABASE_URL),
-  ssl:{rejectUnauthorized:false},
-  enableChannelBinding:true
+app.use((req,res,next)=>{
+  res.set("X-Content-Type-Options","nosniff");
+  res.set("X-Frame-Options","DENY");
+  res.set("Referrer-Policy","no-referrer");
+  if(req.path.startsWith("/api/"))res.set("Cache-Control","no-store");
+  next();
 });
-
+// Uma cópia antiga da interface não deve continuar acessível por URL alternativa.
+app.use("/public",(_req,res)=>res.sendStatus(404));
 app.use(express.json({limit:"2mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
@@ -216,6 +213,7 @@ async function init(){
     );
 
     CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(status);
+    ALTER TABLE pix_payments ADD COLUMN IF NOT EXISTS last_checked_at timestamptz;
     CREATE INDEX IF NOT EXISTS idx_pix_account_id ON pix_payments(account_id);
     CREATE INDEX IF NOT EXISTS idx_pix_account_status ON pix_payments(account_id,status);
   `);
@@ -229,24 +227,6 @@ async function init(){
   await pool.query(`
     INSERT INTO categories(name) VALUES('Carta de Vinhos')
     ON CONFLICT(name) DO NOTHING
-  `);
-
-  // Limpeza pontual de um lançamento antigo de TESTE no histórico de estoque.
-  // IMPORTANTE: remove somente o registro histórico; NÃO altera products.stock_quantity.
-  // A condição operation_started_at garante que só um movimento anterior à operação real seja elegível.
-  await pool.query(`
-    DELETE FROM stock_movements sm
-    USING products p, settings s
-    WHERE sm.product_id=p.id
-      AND s.id=1
-      AND s.operation_started_at IS NOT NULL
-      AND sm.created_at < s.operation_started_at
-      AND p.name='Calabresa Acebolada'
-      AND sm.movement_type='Entrada'
-      AND sm.quantity=5
-      AND sm.previous_quantity=10
-      AND sm.new_quantity=15
-      AND trim(coalesce(sm.note,''))='TESTE DE ENTRADA'
   `);
 
   for(let i=1;i<=12;i++){
@@ -301,6 +281,15 @@ function validCommandAccess(code,token){
   const a=Buffer.from(String(token||""));
   const b=Buffer.from(expected);
   return a.length===b.length && crypto.timingSafeEqual(a,b);
+}
+
+function requireCommandSession(req,account){
+  if(account?.account_type!=="Comanda QR")return;
+  if(!validCommandSession(TABLE_QR_SECRET,String(req.headers["x-command-session"]||""),account.id,account.customer_name)){
+    const error=Error("Sessão da comanda inválida ou encerrada. Peça ao atendimento para liberar o acesso.");
+    error.status=403;
+    throw error;
+  }
 }
 
 // Protecao anti-spam para pedidos publicos.
@@ -527,7 +516,7 @@ async function cancelActiveMercadoPagoPixForAccount(db,accountId){
   return rows.length;
 }
 
-async function reconcilePaidPixAccounts(){
+async function reconcilePaidPixAccounts(targetPixId=null){
   // Procura pagamentos PIX ligados a comandas que ainda constam como abertas.
   // O Mercado Pago é a fonte de verdade: só fecha a comanda se a order estiver realmente paga.
   const rows=(await pool.query(`
@@ -536,14 +525,16 @@ async function reconcilePaidPixAccounts(){
     join table_accounts a on a.id=pp.account_id
     where a.status='Aberta'
       and pp.mp_order_id is not null
-    order by pp.id desc
+    and ($1::int is null or pp.id=$1)
+    order by pp.last_checked_at asc nulls first,pp.id asc
     limit 30
-  `)).rows;
+  `,[targetPixId])).rows;
 
   let closed=0;
 
   for(const p of rows){
     try{
+      await pool.query("update pix_payments set last_checked_at=now() where id=$1",[p.id]);
       const data=await mercadoPago("/v1/orders/"+encodeURIComponent(p.mp_order_id));
       const mpState=mercadoPagoOrderState(data);
       const rawStatus=mpState.status;
@@ -710,7 +701,7 @@ function normalizeCustomerFullName(value){
   return name;
 }
 
-async function getOrCreateOpenCommandAccount(client,code,customerFullName){
+async function getOrCreateOpenCommandAccount(client,code,customerFullName,req){
   const normalized=normalizeQrCommandCode(code);
   if(!normalized)throw Error("Comanda QR inválida.");
   const fullName=normalizeCustomerFullName(customerFullName);
@@ -725,6 +716,7 @@ async function getOrCreateOpenCommandAccount(client,code,customerFullName){
   );
   if(r.rowCount){
     const existing=r.rows[0];
+    requireCommandSession(req,existing);
     if(!String(existing.customer_full_name||"").trim()){
       const updated=await client.query(
         `update table_accounts set customer_full_name=$1 where id=$2 returning *`,
@@ -749,7 +741,7 @@ async function getOrCreateOpenCommandAccount(client,code,customerFullName){
 
 const adminLoginAttempts=new Map();
 function adminLoginKey(req){
-  return String(req.headers["x-forwarded-for"]||req.ip||"unknown").split(",")[0].trim();
+  return String(req.ip||"unknown");
 }
 function adminLoginBlocked(req){
   const key=adminLoginKey(req),now=Date.now();
@@ -807,11 +799,26 @@ app.get("/api/menu",async(req,res)=>{
       where p.active=true
       order by c.id,p.id
     `)).rows;
+    for(const p of products)p.image=imageReference(p.image,p.id);
     res.json({settings,categories,products});
   }catch(e){
     console.error(e);
     res.status(500).json({error:"Erro ao carregar cardápio."});
   }
+});
+
+app.get("/api/products/:id/image",async(req,res)=>{
+  const id=Number(req.params.id);
+  if(!Number.isSafeInteger(id)||id<1)return res.sendStatus(404);
+  try{
+    const row=(await pool.query("select image from products where id=$1 and active=true",[id])).rows[0];
+    const match=String(row?.image||"").match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i);
+    if(!match)return res.sendStatus(404);
+    const version=crypto.createHash("sha256").update(row.image).digest("hex").slice(0,16);
+    if(req.query.v&&req.query.v!==version)return res.sendStatus(404);
+    res.set("Cache-Control",req.query.v?"public, max-age=86400, immutable":"public, max-age=300");
+    res.type(match[1]).send(Buffer.from(match[2],"base64"));
+  }catch(e){console.error(e);res.sendStatus(500);}
 });
 
 app.post("/api/orders",async(req,res)=>{
@@ -885,8 +892,13 @@ app.post("/api/orders",async(req,res)=>{
       throw err;
     }
 
+    if(isCommand){
+      const active=(await c.query("select * from table_accounts where table_number=$1 and account_type='Comanda QR' and status='Aberta' order by id desc limit 1 for update",[tableNumber])).rows[0];
+      if(!active){const e=Error("Identifique-se novamente para abrir uma nova comanda.");e.status=403;throw e;}
+      requireCommandSession(req,active);
+    }
     const account=isCommand
-      ? await getOrCreateOpenCommandAccount(c,commandCode,customerFullName)
+      ? await getOrCreateOpenCommandAccount(c,commandCode,customerFullName,req)
       : await getOrCreateOpenAccount(c,tableNumber);
 
     let total=0;
@@ -1345,7 +1357,7 @@ app.patch("/api/orders/:id",requireAdmin,async(req,res)=>{
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao atualizar status."});
+    res.status(Number(e.status)||Number(e.statusCode)||500).json({error:e.message||"Erro ao atualizar status."});
   }finally{
     c.release();
   }
@@ -1379,11 +1391,11 @@ app.get("/api/client/command-identification/:code",async(req,res)=>{
     }
     const tableNumber=commandCodeToTableNumber(code);
     const account=(await pool.query(
-      `select customer_full_name from table_accounts
+      `select id,customer_name,customer_full_name from table_accounts
        where table_number=$1 and status='Aberta' and account_type='Comanda QR'
        order by id desc limit 1`,[tableNumber]
     )).rows[0];
-    res.json({open:Boolean(account),identified:Boolean(String(account?.customer_full_name||"").trim())});
+    res.json({open:Boolean(account),identified:Boolean(account&&validCommandSession(TABLE_QR_SECRET,String(req.headers["x-command-session"]||""),account.id,code))});
   }catch(e){console.error(e);res.status(500).json({error:"Erro ao verificar identificação da comanda."})}
 });
 
@@ -1396,14 +1408,16 @@ app.post("/api/client/command-identification/:code",async(req,res)=>{
   const c=await pool.connect();
   try{
     await c.query("begin");
-    const account=await getOrCreateOpenCommandAccount(c,code,body.customer_full_name);
+    await c.query("select pg_advisory_xact_lock($1)",[FINANCE_LOCK_KEY]);
+    if(!await getOpenCashSession(c)){const e=Error(noOpenCashOrderMessage());e.status=409;throw e;}
+    const account=await getOrCreateOpenCommandAccount(c,code,body.customer_full_name,req);
     await c.query("commit");
-    res.json({ok:true,account:{id:account.id,customer_name:account.customer_name,customer_full_name:account.customer_full_name}});
+    res.json({ok:true,session_token:commandSession(TABLE_QR_SECRET,account.id,code),account:{id:account.id,customer_name:account.customer_name,customer_full_name:account.customer_full_name}});
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
     const msg=String(e.message||"");
-    const status=(msg.includes("nome completo")||msg.includes("titular")||msg.includes("inválida"))?400:500;
+    const status=Number(e.status)||((msg.includes("nome completo")||msg.includes("titular")||msg.includes("inválida"))?400:500);
     res.status(status).json({error:msg||"Erro ao identificar a comanda."});
   }finally{c.release()}
 });
@@ -1422,6 +1436,7 @@ app.get("/api/client/command/:code",async(req,res)=>{
       [tableNumber]
     )).rows[0];
     if(!account)return res.json({open:false,command_code:code,orders:[],total:0});
+    requireCommandSession(req,account);
     const orders=(await pool.query(
       `select id,status,observation,total,created_at from orders where account_id=$1 order by id`,
       [account.id]
@@ -1435,7 +1450,7 @@ app.get("/api/client/command/:code",async(req,res)=>{
       if(o.status!=="Cancelado")total+=Number(o.total);
     }
     res.json({open:true,account:{id:account.id,account_type:account.account_type,customer_name:code,customer_full_name:account.customer_full_name||""},orders,total});
-  }catch(e){console.error(e);res.status(500).json({error:"Erro ao carregar sua comanda QR."})}
+  }catch(e){console.error(e);res.status(Number(e.status)||500).json({error:Number(e.status)===403?e.message:"Erro ao carregar sua comanda QR."})}
 });
 
 app.post("/api/client/pix",async(req,res)=>{
@@ -1481,6 +1496,8 @@ app.post("/api/client/pix",async(req,res)=>{
       return res.status(409).json({error:staleTableAccountMessage(),stale:true});
     }
 
+    requireCommandSession(req,account);
+
     // Serializa a geração de PIX por comanda. Dois cliques simultâneos passam por esta fila
     // e o segundo reutiliza o PIX criado pelo primeiro, em vez de criar outra cobrança real.
     await c.query("select pg_advisory_xact_lock($1,$2)",[24680,account.id]);
@@ -1517,7 +1534,7 @@ app.post("/api/client/pix",async(req,res)=>{
         await c.query(`update pix_payments set status=$1,updated_at=now() where id=$2`,[paid?"paid":rawStatus,existing.id]);
         if(paid){
           await c.query("commit");
-          const reconciled=await reconcilePaidPixAccounts();
+          const reconciled=await reconcilePaidPixAccounts(existing.id);
           return res.json({ok:true,paid:true,reused:true,payment_id:existing.id,amount:Number(existing.amount),status:"processed",reconciled});
         }
         if(["action_required","pending","processing","created"].includes(rawStatus.toLowerCase())){
@@ -1588,7 +1605,7 @@ app.post("/api/client/pix",async(req,res)=>{
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    return res.status(Number(e.statusCode)||400).json({error:e.message||"Não foi possível gerar o Pix."});
+    return res.status(Number(e.status)||Number(e.statusCode)||400).json({error:e.message||"Não foi possível gerar o Pix."});
   }finally{
     c.release();
   }
@@ -1628,7 +1645,7 @@ app.post("/api/webhooks/mercadopago/orders",async(req,res)=>{
     );
 
     if(mpState.paid){
-      await reconcilePaidPixAccounts();
+      await reconcilePaidPixAccounts(local.id);
     }
 
     console.log("Webhook Mercado Pago processado",{
@@ -1661,7 +1678,8 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
         ? validCommandAccess(p.customer_name,req.query.t)
         : validTableAccess(p.table_number,req.query.t)
     );
-    if(!pixTokenOk){
+    const sessionOk=p?.account_type!=="Comanda QR"||validCommandSession(TABLE_QR_SECRET,String(req.headers["x-command-session"]||""),p.account_id,p.customer_name);
+    if(!pixTokenOk||!sessionOk){
       return res.status(404).json({error:"Pagamento não encontrado."});
     }
 
@@ -1707,7 +1725,7 @@ app.get("/api/client/pix/:id/status",async(req,res)=>{
 
     // Fecha exatamente a comanda vinculada a este pagamento já confirmado.
     // A rotina é idempotente: uma comanda já fechada não é fechada novamente.
-    const result=await reconcilePaidPixAccounts();
+    const result=await reconcilePaidPixAccounts(p.id);
 
     const account=(await pool.query(
       `select status,payment_method,closed_at from table_accounts where id=$1`,
@@ -2007,7 +2025,7 @@ app.post("/api/accounts/:id/cancel",requireAdmin,async(req,res)=>{
   }catch(e){
     try{await c.query("rollback")}catch(_e){}
     console.error(e);
-    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao cancelar a comanda."});
+    res.status(Number(e.status)||Number(e.statusCode)||500).json({error:e.message||"Erro ao cancelar a comanda."});
   }finally{
     c.release();
   }
@@ -2071,7 +2089,7 @@ app.post("/api/accounts/:id/close",requireAdmin,async(req,res)=>{
   }catch(e){
     await c.query("rollback");
     console.error(e);
-    res.status(Number(e.statusCode)||500).json({error:e.message||"Erro ao fechar a conta."});
+    res.status(Number(e.status)||Number(e.statusCode)||500).json({error:e.message||"Erro ao fechar a conta."});
   }finally{
     c.release();
   }
@@ -2463,6 +2481,19 @@ app.get("/api/qrcode/:table",requireAdmin,async(req,res)=>{
 });
 
 
+
+app.get("/api/admin/qr-commands/:code/session",requireAdmin,async(req,res)=>{
+  try{
+    const code=normalizeQrCommandCode(req.params.code);
+    if(!code)return res.sendStatus(400);
+    const account=(await pool.query("select * from table_accounts where account_type='Comanda QR' and table_number=$1 and status='Aberta' order by id desc limit 1",[commandCodeToTableNumber(code)])).rows[0];
+    if(!account)return res.status(404).json({error:"Não há atendimento aberto nesta comanda."});
+    const origin=String(process.env.PUBLIC_BASE_URL||"https://cantinhodosgigantes.onrender.com").replace(/\/$/,"");
+    const url=origin+"/?comanda="+encodeURIComponent(code)+"&t="+commandAccessToken(code)+"#session="+encodeURIComponent(commandSession(TABLE_QR_SECRET,account.id,code));
+    const png=await QRCode.toDataURL(url,{width:700,margin:2});
+    res.json({url,png});
+  }catch(e){console.error(e);res.sendStatus(500);}
+});
 
 app.get("/api/qrcode-command/:code",requireAdmin,async(req,res)=>{
   try{
