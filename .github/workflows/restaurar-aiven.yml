@@ -1,75 +1,65 @@
-name: Restaurar backup no Aiven
-
+name: Validar restauracao em banco isolado
 on:
   workflow_dispatch:
-
+    inputs:
+      backup_run_id:
+        description: 'ID da execução de backup para validar (vazio = último sucesso)'
+        required: false
+        type: string
 permissions:
   actions: read
   contents: read
-
 jobs:
-  restaurar:
-    runs-on: ubuntu-latest
-
+  validar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: ephemeral-validation-only
+          POSTGRES_DB: backup_validation
+        options: >-
+          --health-cmd "pg_isready -U postgres -d backup_validation"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - name: Carregar o repositorio
-        uses: actions/checkout@v4
-
-      - name: Localizar o ultimo backup valido
+      - uses: actions/checkout@v5
+      - name: Localizar backup
         id: backup
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ inputs.backup_run_id }}
         run: |
-          RUN_ID="$(gh run list --workflow backup-neon.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
-          test -n "$RUN_ID"
+          set -euo pipefail
+          RUN_ID="$REQUESTED_RUN"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list --workflow backup-neon.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          fi
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Baixar o backup criptografado
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           run-id: ${{ steps.backup.outputs.run_id }}
           github-token: ${{ github.token }}
+          pattern: backup-aiven-*
+          merge-multiple: true
           path: restore
-
-      - name: Descriptografar e validar o backup
+      - name: Descriptografar backup sem acessar produção
         env:
           BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
         run: |
-          ARQUIVO="$(find restore -type f -name 'backup.dump.enc' -print -quit)"
-          test -n "$ARQUIVO"
-          openssl enc -d -aes-256-cbc -pbkdf2 \
-            -in "$ARQUIVO" \
-            -out backup.dump \
-            -pass env:BACKUP_PASSWORD
-          docker run --rm \
-            -v "$PWD:/restore" \
-            postgres:18 \
-            pg_restore --list /restore/backup.dump > backup-list.txt
-          test -s backup-list.txt
-
-      - name: Restaurar no Aiven
+          set -euo pipefail
+          umask 077
+          test -n "$BACKUP_PASSWORD"
+          test -s restore/backup.dump.enc
+          if [ -f restore/backup.dump.enc.sha256 ]; then
+            (cd restore && sha256sum --check backup.dump.enc.sha256)
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -in restore/backup.dump.enc -out backup.dump -pass env:BACKUP_PASSWORD
+      - name: Restaurar e conferir no PostgreSQL temporário
         env:
-          AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
-        run: |
-          test -n "$AIVEN_DATABASE_URL"
-          docker run --rm \
-            -e AIVEN_DATABASE_URL \
-            -v "$PWD:/restore" \
-            postgres:18 \
-            sh -c 'pg_restore \
-              --clean \
-              --if-exists \
-              --no-owner \
-              --no-privileges \
-              --exit-on-error \
-              --dbname="$AIVEN_DATABASE_URL" \
-              /restore/backup.dump'
-
-      - name: Conferir tabelas restauradas
-        env:
-          AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
-        run: |
-          docker run --rm \
-            -e AIVEN_DATABASE_URL \
-            postgres:18 \
-            sh -c 'psql "$AIVEN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) AS tabelas FROM information_schema.tables WHERE table_schema = '\''public'\'';"'
+          RESTORE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/validate-restore.sh
+      - name: Limpar arquivos temporários
+        if: always()
+        run: rm -f backup.dump restore/backup.dump.enc restore/backup.dump.enc.sha256
