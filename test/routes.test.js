@@ -75,3 +75,54 @@ test('identificação não abre comanda enquanto o caixa está fechado',async()=
  await h.routes.get('POST /api/client/command-identification/:code').at(-1)({params:{code:'A001'},query:{},headers:{},body:{token:qrToken(),customer_full_name:account.customer_full_name}},res);
  assert.equal(res.statusCode,409);assert(!insert);
 });
+test('custos preservam venda histórica, vínculo por ID e unidades parcialmente cobertas',()=>{
+ const h=harness(readDb);
+ const result=vm.runInContext(`calculateSalesCosts([
+ {product_name:'Produto renomeado',product_id:1,quantity:1,unit_price:12,unit_cost:4},
+ {product_name:'Misto',product_id:2,quantity:1,unit_price:10,unit_cost:3},
+ {product_name:'Misto',product_id:2,quantity:2,unit_price:10,unit_cost:0},
+ {product_name:'Atual',product_id:3,quantity:2,unit_price:8,unit_cost:0}
+ ],[{id:1,cost_price:9},{id:2,cost_price:0},{id:3,cost_price:2}],[])`,h.context);
+ assert.equal(result.financial.known_cost,11);
+ assert.equal(result.financial.known_revenue,38);
+ assert.equal(result.financial.missing_revenue,20);
+ assert.equal(result.financial.missing_items,2);
+ assert.equal(result.products.find(x=>x.name==='Misto').missing_items,2);
+});
+test('custo histórico sem produto, associação e exclusão usam a mesma base',()=>{
+ const h=harness(readDb);
+ const result=vm.runInContext(`calculateSalesCosts([
+ {product_name:'Água antiga',quantity:1,unit_price:12,unit_cost:0},
+ {product_name:'Coração',quantity:2,unit_price:10,unit_cost:0},
+ {product_name:'Teste',quantity:1,unit_price:5,unit_cost:2}
+ ],[{id:9,cost_price:3}],[
+ {normalized_name:'agua antiga',historical_unit_cost:4},
+ {normalized_name:'coracao',alias_product_id:9},
+ {normalized_name:'teste',ignored:true}
+ ])`,h.context);
+ assert.equal(result.financial.known_cost,10);
+ assert.equal(result.financial.known_revenue,32);
+ assert.equal(result.financial.missing_items,0);
+ assert.equal(result.financial.ignored_revenue,5);
+});
+test('relatórios diário e por período retornam os mesmos custos sem alterar recebimentos',async()=>{
+ const h=harness((sql,args)=>{
+  if(sql.includes('select oi.product_name,oi.product_id')){
+   assert.deepEqual(Array.from(args),['2026-09-29','2026-09-29']);
+   assert(sql.includes("o.status<>'Cancelado'"));
+   return {rows:[{product_name:'Antigo',product_id:1,quantity:1,unit_price:12,unit_cost:4}]};
+  }
+  if(sql==='select id,cost_price from products')return {rows:[{id:1,cost_price:99}]};
+  if(sql.includes('profit_historical_rules')||sql.includes('cash_sessions'))return {rows:[]};
+  if(sql.includes('count(*)::int contas'))return {rows:[{pix:12,dinheiro:0,cartao:0,total:12,contas:1}]};
+  if(sql.includes('from table_accounts'))return {rows:[{id:1,payment_method:'PIX',closed_at:'2026-09-29T18:00:00Z',total:12,order_count:1,mercado_pago_verified:true}]};
+  throw Error(sql);
+ });
+ for(const route of ['period','daily']){
+  const res=response();
+  await h.routes.get('GET /api/reports/'+route).at(-1)({query:{start:'2026-09-29',end:'2026-09-29',date:'2026-09-29'}},res);
+  assert.equal(res.statusCode,200);assert.equal(res.data.summary.total,12);
+  assert.equal(res.data.summary.custo,4);assert.equal(res.data.summary.lucro_bruto_parcial,8);
+  assert.equal(res.data.summary.itens_sem_custo,0);
+ }
+});

@@ -21,3 +21,16 @@ test('PIX envia autorização do atendimento pelo cabeçalho, sem colocá-la na 
  await vm.runInContext(`api('/api/client/pix/1/status?t=static')`,h.context);
  assert.equal(request.opts.headers['X-Command-Session'],'temporary');assert(!request.url.includes('temporary'));
 });
+test('painel usa cobertura do servidor e não perde custo histórico ao renomear produto',async()=>{
+ const h=frontend();
+ h.context.fetch=async url=>({ok:true,status:200,text:async()=>JSON.stringify(
+ url.includes('/reports/')?{summary:{total:32,custo:7,faturamento_com_custo:22,faturamento_sem_custo:10,itens_sem_custo:1, cobertura_custos:68.75, lucro_bruto_parcial:15},products:[
+ {name:'Nome antigo',quantity:1,total:12,known_cost:4,known_revenue:12,missing_items:0,missing_revenue:0,cost_product_id:1},
+ {name:'Misto',quantity:2,total:20,known_cost:3,known_revenue:10,missing_items:1,missing_revenue:10,cost_product_id:2}
+ ]}:url.includes('/admin/products')?[{id:1,name:'Nome novo',cost_price:99},{id:2,name:'Misto',cost_price:0}]:[])});
+ await vm.runInContext(`profitPanel('2026-09-06','2026-10-26')`,h.context);
+ const html=h.elements.get('adminContent').innerHTML;
+ assert(html.includes('68,8%'));assert(html.includes('15,00'));
+ const missing=html.slice(html.indexOf('Produtos vendidos sem custo'),html.indexOf('Produtos vendidos no período'));
+ assert(!missing.includes('Nome antigo'));assert(missing.includes('Misto'));assert(missing.includes('<td>1</td>'));
+});

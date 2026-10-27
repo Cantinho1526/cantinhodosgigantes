@@ -2224,36 +2224,27 @@ async function profitPanel(start,end){
 
     const total=Number(r.summary.total||0);
     const historicalCost=Number(r.summary.custo||0);
-    const normName=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-    const productMap=new Map(products.map(p=>[normName(p.name),p]));
-    const aliases=Object.fromEntries(Object.entries(rules).filter(([,x])=>x.alias_product_id).map(([k,x])=>[k,x.alias_product_id]));
-    const historicalCosts=Object.fromEntries(Object.entries(rules).filter(([,x])=>Number(x.historical_unit_cost)>0).map(([k,x])=>[k,Number(x.historical_unit_cost)]));
-    const ignoredHistorical=Object.fromEntries(Object.entries(rules).filter(([,x])=>x.ignored).map(([k,x])=>[k,true]));
     const soldAll=(r.products||[]).map(x=>{
-      const key=normName(x.name);
-      const aliasId=Number(aliases[key]||0);
-      const p=productMap.get(key)||products.find(z=>Number(z.id)===aliasId);
-      const historicalUnitCost=Number(historicalCosts[key]||0);
-      const unitCost=Number(p?.cost_price||0)>0?Number(p.cost_price):historicalUnitCost;
-      const qty=Number(x.quantity||0);
-      const revenue=Number(x.total||0);
-      const estCost=unitCost>0?unitCost*qty:null;
+      const p=products.find(z=>Number(z.id)===Number(x.cost_product_id));
+      const qty=Number(x.quantity||0),revenue=Number(x.total||0);
+      const missing=Number(x.missing_items||0);
+      const estCost=missing>0?null:Number(x.known_cost||0);
       const estProfit=estCost===null?null:revenue-estCost;
-      const estMargin=estProfit===null||revenue<=0?null:(estProfit/revenue)*100;
-      return {...x,product:p,unitCost,estCost,estProfit,estMargin,key,ignored:Boolean(ignoredHistorical[key])};
+      return {...x,product:p,unitCost:qty>0&&estCost!==null?estCost/qty:0,estCost,estProfit,
+        estMargin:estProfit===null||revenue<=0?null:estProfit/revenue*100};
     });
     const ignoredSold=soldAll.filter(x=>x.ignored);
     const ignoredRevenue=ignoredSold.reduce((n,x)=>n+Number(x.total||0),0);
     const sold=soldAll.filter(x=>!x.ignored);
     const adjustedTotal=Math.max(0,total-ignoredRevenue);
 
-    const soldWithoutCost=sold.filter(x=>!x.product||x.unitCost<=0);
-    const unitsMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.quantity||0),0);
-    const revenueMissing=soldWithoutCost.reduce((n,x)=>n+Number(x.total||0),0);
+    const soldWithoutCost=sold.filter(x=>Number(x.missing_items)>0);
+    const unitsMissing=Number(r.summary.itens_sem_custo||0);
+    const revenueMissing=Number(r.summary.faturamento_sem_custo||0);
     const catalogWithoutCost=products.filter(p=>Number(p.cost_price||0)<=0);
-    const coveredRevenue=Math.max(0,adjustedTotal-revenueMissing);
+    const coveredRevenue=Number(r.summary.faturamento_com_custo||0);
     const coverage=adjustedTotal>0?Math.max(0,Math.min(100,(coveredRevenue/adjustedTotal)*100)):0;
-    const partialProfit=coveredRevenue-historicalCost;
+    const partialProfit=Number(r.summary.lucro_bruto_parcial||0);
     const partialMargin=coveredRevenue>0?(partialProfit/coveredRevenue)*100:0;
 
     const statusHtml=adjustedTotal<=0
@@ -2271,7 +2262,7 @@ async function profitPanel(start,end){
       const status=x.product
         ? '<span style="color:#ffb74d;font-weight:800">⚠️ Ativo sem custo</span>'
         : '<span style="color:#90caf9;font-weight:800">🕘 Histórico não localizado</span>';
-      return '<tr><td><b>'+E(x.name)+'</b></td><td>'+Number(x.quantity||0)+'</td><td>'+R(x.total)+'</td><td>'+status+'</td><td>'+btn+'</td></tr>';
+      return '<tr><td><b>'+E(x.name)+'</b></td><td>'+Number(x.missing_items||0)+'</td><td>'+R(x.missing_revenue)+'</td><td>'+status+'</td><td>'+btn+'</td></tr>';
     }).join("");
 
     const ranking=sold.slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0));
@@ -2312,9 +2303,9 @@ async function profitPanel(start,end){
           '<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+missingRows+'</tbody></table></div></div>':'')+
 
         '<div class="reportSection"><h3>🏆 Produtos vendidos no período</h3>'+
-          (ranking.length?'<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Custo atual</th><th>Lucro estimado*</th><th>Margem*</th></tr></thead><tbody>'+
+          (ranking.length?'<div style="overflow:auto"><table class="reportTable"><thead><tr><th>Produto</th><th>Qtd.</th><th>Faturamento</th><th>Custo médio considerado</th><th>Lucro bruto*</th><th>Margem*</th></tr></thead><tbody>'+
             ranking.map(x=>'<tr><td>'+E(x.name)+(x.estProfit===null?' <span style="color:#ffb74d;font-size:12px">⚠️ sem custo</span>':'')+'</td><td>'+x.quantity+'</td><td>'+R(x.total)+'</td><td>'+(x.unitCost>0?R(x.unitCost):'—')+'</td><td>'+(x.estProfit===null?'—':R(x.estProfit))+'</td><td>'+(x.estMargin===null?'—':x.estMargin.toFixed(1).replace(".",",")+'%')+'</td></tr>').join("")+
-            '</tbody></table></div><div style="color:#888;font-size:12px;margin-top:8px">* A tabela usa o custo unitário atualmente cadastrado para estimativas por produto. O resumo superior usa os custos gravados no histórico das vendas.</div>':'<div class="empty">Nenhuma venda no período.</div>')+
+            '</tbody></table></div><div style="color:#888;font-size:12px;margin-top:8px">* Todas as telas usam o custo registrado na venda. Quando ausente, usam o custo do produto associado pelo cadastro ou pela regra histórica. Itens com custo incompleto não exibem lucro total.</div>':'<div class="empty">Nenhuma venda no período.</div>')+
         '</div>'+
       '</div>';
   }catch(e){alert(e.message)}
@@ -2397,6 +2388,7 @@ async function periodReport(start,end){
           '<div class="reportBox"><small>Itens vendidos</small><strong>'+r.summary.itens+'</strong></div>'+
           '<div class="reportBox"><small>Custo conhecido</small><strong>'+R(r.summary.custo||0)+'</strong></div>'+
           '<div class="reportBox"><small>Faturamento sem custo</small><strong>'+R(r.summary.faturamento_sem_custo||0)+'</strong></div>'+
+          (Number(r.summary.faturamento_ignorado)>0?'<div class="reportBox"><small>Excluído do cálculo de custos e lucro (regra histórica)</small><strong>'+R(r.summary.faturamento_ignorado)+'</strong></div>':'')+
           '<div class="reportBox"><small>'+(Number(r.summary.itens_sem_custo||0)>0?'Lucro parcial conhecido':'Lucro bruto')+'</small><strong>'+R(Number(r.summary.itens_sem_custo||0)>0?r.summary.lucro_bruto_parcial:r.summary.lucro_bruto)+'</strong></div>'+
           '<div class="reportBox"><small>Cobertura de custos</small><strong>'+Number(r.summary.cobertura_custos||0).toFixed(1).replace(".",",")+'%</strong></div>'+
         '</div>'+
@@ -2435,6 +2427,7 @@ function exportPeriodCSV(){
     ["Itens vendidos",r.summary.itens],
     ["Custo conhecido",r.summary.custo||0],
     ["Faturamento sem custo",r.summary.faturamento_sem_custo||0],
+    ["Excluído do cálculo de custos e lucro",r.summary.faturamento_ignorado||0],
     ["Itens sem custo",r.summary.itens_sem_custo||0],
     ["Lucro parcial conhecido",r.summary.lucro_bruto_parcial||0],
     ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],
@@ -2483,6 +2476,7 @@ async function dailyReport(date){
           '<div class="reportBox"><small>Faturamento</small><strong>'+R(r.summary.total)+'</strong></div>'+
           '<div class="reportBox"><small>Custo conhecido</small><strong>'+R(r.summary.custo)+'</strong></div>'+
           '<div class="reportBox"><small>Faturamento sem custo</small><strong>'+R(r.summary.faturamento_sem_custo||0)+'</strong></div>'+
+          (Number(r.summary.faturamento_ignorado)>0?'<div class="reportBox"><small>Excluído do cálculo de custos e lucro (regra histórica)</small><strong>'+R(r.summary.faturamento_ignorado)+'</strong></div>':'')+
           '<div class="reportBox"><small>'+(Number(r.summary.itens_sem_custo||0)>0?'Lucro parcial conhecido':'Lucro bruto')+'</small><strong>'+R(Number(r.summary.itens_sem_custo||0)>0?r.summary.lucro_bruto_parcial:r.summary.lucro_bruto)+'</strong></div>'+
           '<div class="reportBox"><small>Cobertura de custos</small><strong>'+Number(r.summary.cobertura_custos||0).toFixed(1).replace(".",",")+'%</strong></div>'+
         '</div>'+
@@ -2612,6 +2606,7 @@ function exportDailyCSV(){
     ["Faturamento",r.summary.total],
     ["Custo conhecido",r.summary.custo],
     ["Faturamento sem custo",r.summary.faturamento_sem_custo||0],
+    ["Excluído do cálculo de custos e lucro",r.summary.faturamento_ignorado||0],
     ["Itens sem custo",r.summary.itens_sem_custo||0],
     ["Lucro parcial conhecido",r.summary.lucro_bruto_parcial||0],
     ["Lucro bruto",r.summary.lucro_bruto==null?"Não calculado":r.summary.lucro_bruto],[],

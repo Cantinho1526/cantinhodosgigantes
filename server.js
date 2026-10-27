@@ -2833,6 +2833,44 @@ app.put("/api/profit-rules/:key",requireAdmin,async(req,res)=>{
   }catch(e){console.error(e);res.status(500).json({error:"Erro ao salvar regra histórica do lucro."})}
 });
 
+// One cost calculation for period, daily reports and the profit panel.
+function calculateSalesCosts(rows,products,rules){
+  const key=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const catalog=new Map(products.map(p=>[Number(p.id),p]));
+  const ruleMap=new Map(rules.map(r=>[r.normalized_name,r]));
+  const grouped=new Map();
+  const financial={known_cost:0,known_revenue:0,missing_revenue:0,missing_items:0,ignored_revenue:0};
+  const positive=v=>Number(v)>0?Number(v):0;
+  for(const row of rows){
+    const name=row.product_name,rule=ruleMap.get(key(name))||{};
+    const product=catalog.get(Number(row.product_id));
+    const alias=catalog.get(Number(rule.alias_product_id));
+    const unitCost=positive(row.unit_cost)||positive(product?.cost_price)||positive(alias?.cost_price)||positive(rule.historical_unit_cost);
+    const quantity=Number(row.quantity),revenue=quantity*Number(row.unit_price);
+    if(!grouped.has(name))grouped.set(name,{name,quantity:0,total:0,known_cost:0,known_revenue:0,missing_revenue:0,missing_items:0,ignored:Boolean(rule.ignored),cost_product_id:product?.id||alias?.id||null});
+    const item=grouped.get(name);item.quantity+=quantity;item.total+=revenue;
+    if(unitCost){item.known_cost+=quantity*unitCost;item.known_revenue+=revenue;}
+    else{item.missing_revenue+=revenue;item.missing_items+=quantity;}
+    if(rule.ignored){financial.ignored_revenue+=revenue;continue;}
+    if(unitCost){financial.known_cost+=quantity*unitCost;financial.known_revenue+=revenue;}
+    else{financial.missing_revenue+=revenue;financial.missing_items+=quantity;}
+  }
+  return {products:[...grouped.values()].sort((a,b)=>b.quantity-a.quantity||b.total-a.total),financial};
+}
+async function reportSalesCosts(start,end){
+  const [sales,products,rules]=await Promise.all([
+    pool.query(`select oi.product_name,oi.product_id,oi.quantity,oi.unit_price,oi.unit_cost
+      from order_items oi join orders o on o.id=oi.order_id
+      join table_accounts a on a.id=o.account_id
+      where a.status='Fechada' and o.status<>'Cancelado'
+        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
+        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')`,[start,end]),
+    pool.query("select id,cost_price from products"),
+    pool.query("select normalized_name,alias_product_id,historical_unit_cost,ignored from profit_historical_rules")
+  ]);
+  return calculateSalesCosts(sales.rows,products.rows,rules.rows);
+}
+
 app.get("/api/reports/period",requireAdmin,async(req,res)=>{
   try{
     const start=String(req.query.start||"").trim();
@@ -2879,37 +2917,7 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
       else if(a.payment_method==="Cartão")cartao+=value;
     }
 
-    const products=(await pool.query(`
-      select
-        oi.product_name as name,
-        sum(oi.quantity)::int as quantity,
-        sum(oi.quantity*oi.unit_price)::numeric as total
-      from order_items oi
-      join orders o on o.id=oi.order_id
-      join table_accounts a on a.id=o.account_id
-      where a.status='Fechada'
-        and o.status<>'Cancelado'
-        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
-        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')
-      group by oi.product_name
-      order by sum(oi.quantity) desc,sum(oi.quantity*oi.unit_price) desc
-    `,[start,end])).rows;
-
-    const financial=(await pool.query(`
-      select
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) else 0 end),0)::numeric as known_cost,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity else 0 end),0)::int as missing_items
-      from order_items oi
-      join orders o on o.id=oi.order_id
-      join table_accounts a on a.id=o.account_id
-      left join products p on p.id=oi.product_id
-      where a.status='Fechada'
-        and o.status<>'Cancelado'
-        and a.closed_at >= ($1::date at time zone 'America/Sao_Paulo')
-        and a.closed_at < (($2::date + interval '1 day') at time zone 'America/Sao_Paulo')
-    `,[start,end])).rows[0];
+    const {products,financial}=await reportSalesCosts(start,end);
 
     const byDay={};
     for(const a of accounts){
@@ -2939,13 +2947,14 @@ app.get("/api/reports/period",requireAdmin,async(req,res)=>{
         contas,
         ticket_medio:contas?total/contas:0,
         itens:items,
+        faturamento_ignorado:Number(financial.ignored_revenue),
         custo:Number(financial.known_cost),
         faturamento_com_custo:Number(financial.known_revenue),
         faturamento_sem_custo:Number(financial.missing_revenue),
         itens_sem_custo:Number(financial.missing_items),
-        cobertura_custos:total>0?(Number(financial.known_revenue)/total)*100:0,
+        cobertura_custos:(total-financial.ignored_revenue)>0?(Number(financial.known_revenue)/(total-financial.ignored_revenue))*100:0,
         lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
-        lucro_bruto:Number(financial.missing_items)>0?null:total-Number(financial.known_cost)
+        lucro_bruto:Number(financial.missing_items)>0?null:total-financial.ignored_revenue-Number(financial.known_cost)
       },
       products:products.map(x=>({...x,total:Number(x.total)})),
       days
@@ -2998,35 +3007,7 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
       order by a.closed_at desc
     `,[date])).rows;
 
-    const products=(await pool.query(`
-      select oi.product_name name,
-        sum(oi.quantity)::int quantity,
-        sum(oi.quantity*oi.unit_price)::numeric total
-      from order_items oi
-      join orders o on o.id=oi.order_id
-      join table_accounts a on a.id=o.account_id
-      where a.status='Fechada'
-        and o.status<>'Cancelado'
-        and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
-      group by oi.product_name
-      order by quantity desc,total desc
-      limit 50
-    `,[date])).rows;
-
-    const financial=(await pool.query(`
-      select
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) else 0 end),0)::numeric as known_cost,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is not null then oi.quantity * oi.unit_price else 0 end),0)::numeric as known_revenue,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity * oi.unit_price else 0 end),0)::numeric as missing_revenue,
-        coalesce(sum(case when coalesce(nullif(oi.unit_cost,0),nullif(p.cost_price,0)) is null then oi.quantity else 0 end),0)::int as missing_items
-      from order_items oi
-      join orders o on o.id=oi.order_id
-      join table_accounts a on a.id=o.account_id
-      left join products p on p.id=oi.product_id
-      where a.status='Fechada'
-        and o.status<>'Cancelado'
-        and (a.closed_at at time zone 'America/Sao_Paulo')::date=$1::date
-    `,[date])).rows[0];
+    const {products,financial}=await reportSalesCosts(date,date);
 
     const cash=(await pool.query(`
       select * from cash_sessions
@@ -3059,13 +3040,14 @@ app.get("/api/reports/daily",requireAdmin,async(req,res)=>{
         contas:contasCount,
         ticket_medio:contasCount?totalValue/contasCount:0,
         itens,
+        faturamento_ignorado:Number(financial.ignored_revenue),
         custo:Number(financial.known_cost),
         faturamento_com_custo:Number(financial.known_revenue),
         faturamento_sem_custo:Number(financial.missing_revenue),
         itens_sem_custo:Number(financial.missing_items),
-        cobertura_custos:totalValue>0?(Number(financial.known_revenue)/totalValue)*100:0,
+        cobertura_custos:(totalValue-financial.ignored_revenue)>0?(Number(financial.known_revenue)/(totalValue-financial.ignored_revenue))*100:0,
         lucro_bruto_parcial:Number(financial.known_revenue)-Number(financial.known_cost),
-        lucro_bruto:Number(financial.missing_items)>0?null:totalValue-Number(financial.known_cost)
+        lucro_bruto:Number(financial.missing_items)>0?null:totalValue-financial.ignored_revenue-Number(financial.known_cost)
       },
       accounts:normalizedAccounts,
       products:products.map(x=>({...x,total:Number(x.total)})),
